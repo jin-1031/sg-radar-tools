@@ -1,0 +1,9 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="common/common.vcxitems" Id="8f3c1a2e-7b4d-4e91-9c6a-2d5e8f0b1a73" />
+  <Project Path="radar-emulator/radar-emulator.vcxproj" Id="4b11d02c-59a9-4e67-9e56-47d48f0b9373" />
+  <Project Path="radar-studio/radar-studio.vcxproj" Id="d65f9bf8-1c62-40b1-9e20-a1eba33b2d19" />
+</Solution>

@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="core">
+      <UniqueIdentifier>{ADB55076-46EE-4907-9F75-E8C8807201A8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="device">
+      <UniqueIdentifier>{9ACF1F39-6D80-45D8-8D05-244B84266181}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ui">
+      <UniqueIdentifier>{a87fdb31-682e-4388-a917-f104d2aff008}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ui\window">
+      <UniqueIdentifier>{a5be6737-e91c-4272-ac54-e16c02388d90}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\core\point_cloud_dataset.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\playback_controller.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\device\mock_protocol.cpp">
+      <Filter>device</Filter>
+    </ClCompile>
+    <ClCompile Include="src\device\mock_server.cpp">
+      <Filter>device</Filter>
+    </ClCompile>
+    <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)pcr\point_cloud_recorder.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\debug.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\entropy_common.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\error_private.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\fse_decompress.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\pool.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\threading.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\xxhash.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\zstd_common.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\fse_compress.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\hist.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\huf_compress.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_compress.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_compress_literals.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_compress_sequences.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_compress_superblock.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_double_fast.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_fast.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_lazy.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_ldm.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_opt.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_preSplit.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstdmt_compress.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\decompress\huf_decompress.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\decompress\zstd_ddict.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\decompress\zstd_decompress.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\decompress\zstd_decompress_block.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)os\dialog.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)os\network.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)ui\imgui_custom.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)ui\window\console_window.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)ui\window\docking_window.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)util\colormap.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)util\debug_console.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\context.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\egl_context.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\init.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\input.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\monitor.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\null_init.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\null_joystick.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\null_monitor.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\null_window.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\osmesa_context.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\platform.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\vulkan.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\wgl_context.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\win32_init.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\win32_joystick.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\win32_module.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\win32_monitor.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\win32_thread.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\win32_time.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\win32_window.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\glfw\src\window.c" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\imgui\imgui.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\imgui\imgui_demo.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\imgui\imgui_draw.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\imgui\imgui_tables.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\imgui\backends\imgui_impl_glfw.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\imgui\backends\imgui_impl_opengl3.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\implot\implot.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\implot\implot_demo.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\implot\implot_items.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\implot3d\implot3d.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\implot3d\implot3d_demo.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\implot3d\implot3d_items.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)thirdparty\implot3d\implot3d_meshes.cpp" />
+    <ClCompile Include="src\ui\window\control_window.cpp">
+      <Filter>ui\window</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\window\launchpad_window.cpp">
+      <Filter>ui\window</Filter>
+    </ClCompile>
+    <ClCompile Include="src\my_app.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\core\point_cloud_dataset.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\playback_controller.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\device\mock_protocol.h">
+      <Filter>device</Filter>
+    </ClInclude>
+    <ClInclude Include="src\device\mock_server.h">
+      <Filter>device</Filter>
+    </ClInclude>
+    <ClInclude Include="$(MSBuildThisFileDirectory)pcr\pcr.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)pcr\pcr_format.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)pcr\pcr_type.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)pcr\point_cloud_recorder.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\zstd.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\zstd_errors.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\allocations.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\bits.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\bitstream.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\compiler.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\cpu.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\debug.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\error_private.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\fse.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\huf.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\mem.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\pool.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\portability_macros.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\threading.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\xxhash.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\zstd_deps.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\zstd_internal.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\common\zstd_trace.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\clevels.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\hist.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_compress_internal.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_compress_literals.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_compress_sequences.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_compress_superblock.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_cwksp.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_double_fast.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_fast.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_lazy.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_ldm.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_ldm_geartab.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_opt.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstd_preSplit.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\compress\zstdmt_compress.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\decompress\zstd_ddict.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\decompress\zstd_decompress_block.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\zstd\lib\decompress\zstd_decompress_internal.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)os\dialog.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)os\network.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)ui\imgui_custom.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)ui\window\console_window.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)ui\window\docking_window.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)util\colormap.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)util\debug_console.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\glfw\include\GLFW\glfw3.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\glfw\include\GLFW\glfw3native.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\imgui\imconfig.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\imgui\imgui.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\imgui\imgui_internal.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\imgui\backends\imgui_impl_glfw.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\imgui\backends\imgui_impl_opengl3.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\implot\implot.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\implot\implot_internal.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\implot3d\implot3d.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\implot3d\implot3d_internal.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)thirdparty\font-awesome\IconsFontAwesome6.h" />
+    <ClInclude Include="src\ui\window\control_window.h">
+      <Filter>ui\window</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\window\launchpad_window.h">
+      <Filter>ui\window</Filter>
+    </ClInclude>
+    <ClInclude Include="src\my_app.h" />
+    <ClInclude Include="src\ui\window_font.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="imgui.ini" />
+  </ItemGroup>
+</Project>
