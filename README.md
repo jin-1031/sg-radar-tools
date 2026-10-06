@@ -84,11 +84,28 @@ cd sg-radar-tools
 
 ### Python PCR 파일 로딩
 
-전처리용 로더는 `tools/pcr/pcr_loader.py`이고, 예시 코드는 `tools/pcr/example.py`에 있습니다. Python 3.14 이상은 표준 라이브러리 `compression.zstd`를 씁니다. 만약 그보다 낮은 버전이면 `pip install zstandard`가 필요합니다.
+전처리용 로더는 `tools/pcr/pcr_loader.py`이고, 예시 코드는 `tools/pcr/example.py`에 있습니다. Python 3.14 이상은 표준 라이브러리 `compression.zstd`를 씁니다. Python 3.14 미만에서는 `zstandard` package가 필요합니다.
+
+```
+python -m pip install zstandard
+```
+
+MSYS2 Python처럼 externally-managed environment에서는 시스템 Python에 pip로 강제 설치하지 말고 해당 환경의 package manager를 사용해야 합니다. MSYS2 MinGW64에서는 다음 명령으로 설치할 수 있습니다.
+
+```
+pacman -S --needed mingw-w64-x86_64-python-zstandard
+```
 
 ```
 python tools/pcr/example.py
 python tools/pcr/example.py path/to/file.pcr
+```
+
+PCR의 단일 세션을 point 단위 CSV로 변환하려면 다음 명령을 사용합니다. CSV의 `timestamp_ms`는 선택한 세션의 첫 frame을 0으로 두고 이후 frame의 `delta_us`를 누적한 값입니다. PCR에 여러 세션이 있으면 0부터 시작하는 `--session` index를 지정해야 합니다.
+
+```
+python tools/pcr/pcr_to_csv.py input.pcr output.csv
+python tools/pcr/pcr_to_csv.py input.pcr output.csv --session 0
 ```
 
 
