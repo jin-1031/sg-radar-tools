@@ -11,7 +11,7 @@
 
 ## 요구 사항
 
-Windows 10/11 x64에서만 빌드할 수 있습니다. [Visual Studio](https://visualstudio.microsoft.com/)가 필요하고, C++ 플랫폼 도구 집합`v145`(Visual Studio 2026)가 있어야 합니다. 서드파티 라이브러리는 `common/thirdparty/`에 모두 들어 있으므로 별도 설치는 필요없습니다.
+Windows 10/11 x64에서만 빌드할 수 있습니다. [Visual Studio 2022](https://visualstudio.microsoft.com/)와 C++ 플랫폼 도구 집합 `v143`이 필요합니다. Radar Studio와 Radar Emulator의 Debug/Release, Win32/x64 구성은 모두 `v143`으로 retarget되어 있습니다. 서드파티 라이브러리는 `common/thirdparty/`에 모두 들어 있으므로 별도 설치는 필요없습니다.
 
 ## 빠른 시작
 
@@ -20,7 +20,7 @@ Windows 10/11 x64에서만 빌드할 수 있습니다. [Visual Studio](https://v
 ### 1. 클론
 
 ```
-git clone https://github.com/dandevlog0206/sg-radar-tools.git
+git clone https://github.com/jin-1031/sg-radar-tools.git
 cd sg-radar-tools
 ```
 
@@ -31,6 +31,12 @@ cd sg-radar-tools
 1. Visual Studio로 `sg-radar-tools.slnx`로드.
 2. 구성을 **Release | x64**로 설정.
 3. 솔루션 빌드.
+
+Visual Studio 2022 Developer PowerShell에서는 repository root에서 다음 명령으로 빌드할 수 있습니다.
+
+```
+MSBuild .\sg-radar-tools.slnx /p:Configuration=Release /p:Platform=x64
+```
 
 빌드 후 실행 파일은 최종적으로 아래 경로에 생성됩니다.
 
@@ -50,6 +56,22 @@ cd sg-radar-tools
 [https://drive.dandevlog.com/s/XiTRfDSSRsnrP5t](https://drive.dandevlog.com/s/XiTRfDSSRsnrP5t)
 
 ### 4. 실행
+
+각 프로그램은 상대 asset 경로와 `imgui.ini`를 현재 작업 디렉터리를 기준으로 읽습니다. repository root에서 아래와 같이 각 실행 파일이 있는 디렉터리로 이동한 뒤 실행합니다.
+
+Radar Studio:
+
+```
+Set-Location .\bin\radar-studio
+.\radar-studio.exe
+```
+
+Radar Emulator:
+
+```
+Set-Location .\bin\radar-emulator
+.\radar-emulator.exe
+```
 
 1. Radar Emulator를 켠 뒤 우측 Control 창에서 **Open Folder**를 누르고, 내려받은 데이터셋 폴더를 엽니다.
 2. Radar Studio를 켜고 왼쪽 Sensor 창에서 **Auto Connect**를 누릅니다(Radar Emulator를 가상 센서로 인식).
