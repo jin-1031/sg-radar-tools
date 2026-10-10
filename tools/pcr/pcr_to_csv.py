@@ -13,7 +13,7 @@ from pcr_loader import Frame, Recording, Session, load
 
 CSV_HEADER = (
     "frame",
-    "timestamp_ms",
+    "timestamp_us",
     "x",
     "y",
     "z",
@@ -73,13 +73,6 @@ def iter_frames_with_elapsed_us(
         yield frame, elapsed_us
 
 
-def format_timestamp_ms(elapsed_us: int) -> str:
-    milliseconds, remaining_us = divmod(elapsed_us, 1000)
-    if remaining_us == 0:
-        return str(milliseconds)
-    return f"{milliseconds}.{remaining_us:03d}".rstrip("0")
-
-
 def format_point_value(value: float) -> str:
     return format(value, ".9g")
 
@@ -100,12 +93,11 @@ def write_session_csv(
                 empty_frame_count += 1
                 continue
 
-            timestamp_ms = format_timestamp_ms(elapsed_us)
             for point in frame.points:
                 writer.writerow(
                     (
                         frame.frame_count,
-                        timestamp_ms,
+                        elapsed_us,
                         format_point_value(point.x),
                         format_point_value(point.y),
                         format_point_value(point.z),

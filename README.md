@@ -123,12 +123,22 @@ python tools/pcr/example.py
 python tools/pcr/example.py path/to/file.pcr
 ```
 
-PCR의 단일 세션을 point 단위 CSV로 변환하려면 다음 명령을 사용합니다. CSV의 `timestamp_ms`는 선택한 세션의 첫 frame을 0으로 두고 이후 frame의 `delta_us`를 누적한 값입니다. PCR에 여러 세션이 있으면 0부터 시작하는 `--session` index를 지정해야 합니다.
+PCR의 단일 세션을 point 단위 CSV로 변환하려면 다음 명령을 사용합니다. CSV의 `timestamp_us`는 선택한 세션의 첫 frame을 0으로 두고 이후 frame의 `delta_us`를 누적한 정수 마이크로초 값입니다. 첫 frame의 `delta_us`는 무시하며, 세션마다 시간 기준을 초기화합니다. PCR에 여러 세션이 있으면 0부터 시작하는 `--session` index를 지정해야 합니다.
 
 ```
 python tools/pcr/pcr_to_csv.py input.pcr output.csv
 python tools/pcr/pcr_to_csv.py input.pcr output.csv --session 0
 ```
+
+출력 컬럼 순서는 다음과 같습니다. 각 point가 한 행이며, 같은 frame의 point들은 같은 시간을 갖습니다. 빈 frame은 행을 만들지 않지만 이후 frame의 누적 시간에는 포함됩니다.
+
+```csv
+frame,timestamp_us,x,y,z,doppler,power,target_id
+```
+
+기존 `timestamp_ms`의 `50`, `101.234`는 각각 `timestamp_us`의 `50000`, `101234`에 해당합니다. frame 번호와 point 값은 그대로 보존합니다. 이 시간은 PCR에 저장된 frame 간격 기준이며, Live Backend의 connection-relative 시간과 같은 시작 시각을 의미하지 않습니다.
+
+기존 ms CSV는 그대로 보관하고 신규 us CSV는 다른 output path로 생성하세요. 현재 ElevSafe B CSV Reader는 `timestamp_ms`만 읽으므로, B 측 us 지원이 반영되기 전에는 신규 CSV의 시간값이 0으로 처리되어 호환되지 않습니다.
 
 
 

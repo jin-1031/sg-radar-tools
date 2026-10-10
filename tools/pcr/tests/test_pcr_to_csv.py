@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -153,15 +154,47 @@ class TimestampTests(unittest.TestCase):
         ]
 
         self.assertEqual(elapsed, [0, 50_000, 101_234])
+
+        for frame in frames:
+            frame.points.append(make_point())
+        _, rows = convert_and_read(make_session(frames))
+        self.assertEqual([row[1] for row in rows[1:]], ["0", "50000", "101234"])
+
+    def test_integer_timestamps_match_legacy_milliseconds(self) -> None:
+        frames = [
+            make_frame(1, points=[make_point()]),
+            make_frame(2, delta_us=1, points=[make_point()]),
+            make_frame(3, delta_us=1_009, points=[make_point()]),
+            make_frame(4, delta_us=990, points=[make_point()]),
+            make_frame(5, delta_us=99_234, points=[make_point()]),
+        ]
+        _, rows = convert_and_read(make_session(frames))
+        timestamps = [row[1] for row in rows[1:]]
+        self.assertEqual(timestamps, ["0", "1", "1010", "2000", "101234"])
         self.assertEqual(
-            [pcr_to_csv.format_timestamp_ms(value) for value in elapsed],
-            ["0", "50", "101.234"],
+            [Decimal(value) for value in timestamps],
+            [Decimal(value) * 1000 for value in ("0", "0.001", "1.01", "2", "101.234")],
         )
 
-    def test_timestamp_format_preserves_microseconds_without_padding(self) -> None:
-        self.assertEqual(pcr_to_csv.format_timestamp_ms(1), "0.001")
-        self.assertEqual(pcr_to_csv.format_timestamp_ms(1_010), "1.01")
-        self.assertEqual(pcr_to_csv.format_timestamp_ms(2_000), "2")
+    def test_timestamps_reset_for_each_selected_session(self) -> None:
+        sessions = [
+            make_session([
+                make_frame(1, delta_us=999, points=[make_point()]),
+                make_frame(2, delta_us=50_000, points=[make_point()]),
+            ]),
+            make_session([
+                make_frame(3, delta_us=888, points=[make_point()]),
+                make_frame(4, delta_us=1, points=[make_point()]),
+            ], session_id=11),
+        ]
+        recording = make_recording(sessions)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "output.csv"
+            for index, expected in enumerate((["0", "50000"], ["0", "1"])):
+                pcr_to_csv.convert_recording(recording, output_path, index)
+                with output_path.open(encoding="utf-8", newline="") as output_file:
+                    rows = list(csv.reader(output_file))
+                self.assertEqual([row[1] for row in rows[1:]], expected)
 
 
 class CsvOutputTests(unittest.TestCase):
@@ -177,7 +210,7 @@ class CsvOutputTests(unittest.TestCase):
             rows[0],
             [
                 "frame",
-                "timestamp_ms",
+                "timestamp_us",
                 "x",
                 "y",
                 "z",
@@ -228,7 +261,7 @@ class CsvOutputTests(unittest.TestCase):
 
         _, rows = convert_and_read(make_session(frames))
 
-        self.assertEqual([rows[2][1], rows[3][1]], ["12.345", "12.345"])
+        self.assertEqual([rows[2][1], rows[3][1]], ["12345", "12345"])
 
     def test_duplicate_and_noncontiguous_frame_counts_are_preserved(self) -> None:
         frames = [
@@ -250,10 +283,22 @@ class CsvOutputTests(unittest.TestCase):
         summary, rows = convert_and_read(make_session(frames))
 
         self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[1][1], "5")
+        self.assertEqual(rows[1][1], "5000")
         self.assertEqual(summary.frame_count, 2)
         self.assertEqual(summary.empty_frame_count, 1)
         self.assertEqual(summary.row_count, 1)
+
+    def test_empty_middle_frame_preserves_elapsed_time(self) -> None:
+        frames = [
+            make_frame(1, points=[make_point()]),
+            make_frame(2, delta_us=50_000),
+            make_frame(3, delta_us=51_234, points=[make_point()]),
+        ]
+        summary, rows = convert_and_read(make_session(frames))
+        self.assertEqual([row[0] for row in rows[1:]], ["1", "3"])
+        self.assertEqual([row[1] for row in rows[1:]], ["0", "101234"])
+        self.assertEqual(summary.empty_frame_count, 1)
+        self.assertEqual(summary.row_count, 2)
 
     def test_empty_session_writes_header_only(self) -> None:
         summary, rows = convert_and_read(make_session())
