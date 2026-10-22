@@ -4,6 +4,7 @@
 
 #include "device/retina.h"
 #include "ui/implot3d_custom.h"
+#include "ui/korean_font.h"
 #include "ui/window/analysis_window.h"
 #include "ui/window/point_cloud_window.h"
 #include "ui/window/recording_window.h"
@@ -93,7 +94,9 @@ MyApp::MyApp()
 
 MyApp::~MyApp()
 {
-	cancelOrDisconnect();
+	cancelOrDisconnectImpl("program_exit");
+	if (m_ioThread.joinable()) m_ioThread.join();
+	finishConnectionAttempt();
 
 	ImGui::SaveIniSettingsToDisk(ImGui::GetIO().IniFilename);
 
@@ -113,6 +116,8 @@ void MyApp::run()
 	while (!glfwWindowShouldClose(m_window))
 	{
 		glfwPollEvents();
+		if (glfwWindowShouldClose(m_window)) break;
+		updateConnection();
 
 		if (m_windowMinimized)
 		{
@@ -129,10 +134,22 @@ void MyApp::run()
 
 void MyApp::connect(const std::string& host)
 {
-	if (m_connectionStatus.load() == ConnectionStatus::Connected)
+	if (!m_workerDone.load() || m_connectionStatus.load() == ConnectionStatus::Connected)
 		return;
 
-	cancelOrDisconnect();
+	cancelOrDisconnectImpl("connect_preparation");
+	finishConnectionAttempt();
+	m_connectionWanted = true;
+	m_cancelConnection.store(false);
+	m_workerDone.store(false);
+	m_readFailure.store(false);
+	m_tcpConnected.store(false);
+	m_attemptEstablished.store(false);
+	m_validFrameReceived.store(false);
+	m_workerException = false;
+	m_recoveryAnnounced = false;
+	m_connectionLossHandled = false;
+	m_io = std::make_unique<asio::io_context>();
 
 	if (!host.empty())
 	{
@@ -144,6 +161,10 @@ void MyApp::connect(const std::string& host)
 	}
 
 	m_connectionStatus.store(ConnectionStatus::Finding);
+	{
+		std::lock_guard lock(m_finderMutex);
+		m_deviceFinder = std::make_unique<retina::DeviceFinder>(log());
+	}
 
 	m_ioThread = std::thread([this]()
 		{
@@ -154,11 +175,6 @@ void MyApp::connect(const std::string& host)
 				std::lock_guard<std::mutex> lock(m_networkMutex);
 				network_info = m_networkInfo;
 			}
-			{
-				std::lock_guard<std::mutex> lock(m_finderMutex);
-				m_deviceFinder = std::make_unique<retina::DeviceFinder>(log());
-			}
-
 			const auto res = m_deviceFinder->find(network_info.address, network_info.subnetMask, found_host);
 
 			{
@@ -170,12 +186,14 @@ void MyApp::connect(const std::string& host)
 			{
 				m_connectionStatus.store(ConnectionStatus::Failed);
 				log() << "[error] network: failed to discover retina device on the local network\n";
+				m_workerDone.store(true);
 				return;
 			}
 			if (res == retina::DeviceFinder::Result::Canceled)
 			{
 				m_connectionStatus.store(ConnectionStatus::Disconnected);
 				log() << "[info] network: device discovery canceled\n";
+				m_workerDone.store(true);
 				return;
 			}
 
@@ -186,49 +204,136 @@ void MyApp::connect(const std::string& host)
 
 void MyApp::cancelOrDisconnect()
 {
-	if (m_connectionStatus.load() == ConnectionStatus::Finding)
+	cancelOrDisconnectImpl("user_disconnect_or_cancel");
+}
+
+void MyApp::cancelOrDisconnectImpl(const char* reason)
+{
+	log() << "[info] network: disconnect requested reason=" << reason
+		<< " eventUnixMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::system_clock::now().time_since_epoch()).count() << '\n';
+	const bool hadAttempt = m_ioThread.joinable() || m_reconnect.pending();
+	m_connectionWanted = false;
+	m_reconnect.reset();
+	m_cancelConnection.store(true);
+	log() << "[info] reconnect: canceled reason=" << reason << '\n';
+	if (hadAttempt)
+		for (auto* window : m_pointWindows) window->stopForConnectionLoss(reason);
 	{
+		std::lock_guard lock(m_finderMutex);
+		if (m_deviceFinder) m_deviceFinder->cancel();
+	}
+	if (!m_workerDone.load() && m_io)
+	{
+		// Socket cancellation runs on the same thread as its asynchronous operations.
+		asio::post(*m_io, [this]()
 		{
-			std::lock_guard<std::mutex> lock(m_finderMutex);
-			if (m_deviceFinder)
-				m_deviceFinder->cancel();
+			std::lock_guard lock(m_clientMutex);
+			if (m_client) m_client->shutdown();
+		});
+	}
+	if (m_workerDone.load()) m_connectionStatus.store(ConnectionStatus::Disconnected);
+}
+
+void MyApp::finishConnectionAttempt()
+{
+	if (m_ioThread.joinable()) m_ioThread.join();
+	std::unique_lock lock(m_clientMutex);
+	if (m_client)
+	{
+		m_client->shutdown();
+		// Drain canceled handlers while their raw-this owner is still alive.
+		m_io->restart();
+		lock.unlock();
+		try { m_io->run(); }
+		catch (const std::exception& e) { log() << "[error] network: cleanup exception: " << e.what() << '\n'; }
+		lock.lock();
+		m_client.reset();
+	}
+	// Never dispatch a previous attempt's handlers in the next connection.
+	m_io.reset();
+}
+
+void MyApp::stopRecordingForConnectionLoss()
+{
+	if (m_connectionLossHandled) return;
+	m_connectionLossHandled = true;
+	log() << "[info] reconnect: connection ended host=" << m_lastConnectedHost << '\n';
+	for (auto* window : m_pointWindows) window->stopForConnectionLoss();
+}
+
+void MyApp::updateConnection()
+{
+	const auto now = retina::ReconnectPolicy::Clock::now();
+	if (m_tcpConnected.exchange(false))
+	{
+		std::lock_guard lock(m_clientMutex);
+		if (m_client)
+		{
+			m_lastConnectedHost = m_client->getDeviceInfo().ip;
+			const auto spec = m_deviceInfo->sensorSpec;
+			*m_deviceInfo = m_client->getDeviceInfo();
+			m_deviceInfo->sensorSpec = spec;
 		}
-
-		if (m_ioThread.joinable())
-			m_ioThread.join();
-
+		if (m_reconnect.attempts())
+			log() << "[info] reconnect: tcp connected attempt=" << m_reconnect.attempts() << "/5\n";
+	}
+	if (m_readFailure.load()) stopRecordingForConnectionLoss();
+	if (m_validFrameReceived.load() && !m_recoveryAnnounced && !m_cancelConnection.load())
+	{
+		m_recoveryAnnounced = true;
+		m_firstValidAt = now;
+		if (m_reconnect.attempts())
+			log() << "[info] reconnect: recovered attempt=" << m_reconnect.attempts() << "/5\n";
+	}
+	// A single frame is recovery, but does not replenish a rapidly flapping retry budget.
+	if (m_recoveryAnnounced && !m_workerDone.load() && now - m_firstValidAt >= std::chrono::seconds(30))
+		m_reconnect.reset();
+	if (m_workerDone.load() && m_ioThread.joinable())
+	{
+		const bool retry = m_connectionWanted && !m_cancelConnection.load() && !m_workerException &&
+			(m_readFailure.load() || (m_reconnect.attempts() != 0 && !m_attemptEstablished.load()));
+		if (m_reconnect.attempts() && !m_recoveryAnnounced && !m_cancelConnection.load())
+			log() << "[info] reconnect: attempt failed before valid frame attempt=" << m_reconnect.attempts() << "/5\n";
+		if (!m_cancelConnection.load()) stopRecordingForConnectionLoss();
+		finishConnectionAttempt();
+		const auto spec = m_deviceInfo->sensorSpec;
+		*m_deviceInfo = retina::DeviceInfo{};
+		m_deviceInfo->sensorSpec = spec;
+		m_connectionStatus.store(ConnectionStatus::Disconnected);
+		m_connectionUpdated.store(true);
+		if (!retry) m_connectionWanted = false;
+		if (retry && !m_lastConnectedHost.empty())
 		{
-			std::lock_guard<std::mutex> lock(m_finderMutex);
-			m_deviceFinder.reset();
+			if (m_reconnect.schedule(now))
+			{
+				m_connectionStatus.store(ConnectionStatus::Connecting);
+				log() << "[info] reconnect: scheduled attempt=" << m_reconnect.attempts()
+					<< "/5 delayMs=" << m_reconnect.delaySeconds() * 1000 << " host=" << m_lastConnectedHost << '\n';
+			}
+			else
+			{
+				m_connectionWanted = false;
+				log() << "[error] reconnect: exhausted attempts=5\n";
+			}
 		}
 	}
-	else if (m_connectionStatus.load() == ConnectionStatus::Connected)
+	if (m_connectionWanted && m_reconnect.ready(now) && !m_ioThread.joinable())
 	{
-		{
-			std::lock_guard<std::mutex> lock(m_clientMutex);
-			if (m_client)
-				m_client->shutdown();
-		}
-
-		m_io->stop();
-
-		if (m_ioThread.joinable())
-			m_ioThread.join();
-
-		{
-			std::lock_guard<std::mutex> lock(m_clientMutex);
-			m_client.reset();
-		}
+		m_reconnect.started();
+		m_io = std::make_unique<asio::io_context>();
+		m_workerDone.store(false);
+		m_readFailure.store(false);
+		m_tcpConnected.store(false);
+		m_attemptEstablished.store(false);
+		m_validFrameReceived.store(false);
+		m_workerException = false;
+		m_recoveryAnnounced = false;
+		m_connectionLossHandled = false;
+		log() << "[info] reconnect: attempt started attempt=" << m_reconnect.attempts()
+			<< "/5 host=" << m_lastConnectedHost << '\n';
+		m_ioThread = std::thread([this, host = m_lastConnectedHost]() { connectToDeviceAsync(host); });
 	}
-	else if (m_ioThread.joinable())
-	{
-		m_ioThread.join();
-	}
-
-	m_connectionStatus.store(ConnectionStatus::Disconnected);
-	const retina::SensorSpec applied_spec = m_deviceInfo->sensorSpec;
-	*m_deviceInfo = retina::DeviceInfo{};
-	m_deviceInfo->sensorSpec = applied_spec;
 }
 
 MyApp::ConnectionStatus MyApp::getConnectionStatus() const
@@ -353,6 +458,8 @@ void MyApp::setupWindows()
 	{
 		io.FontDefault = font;
 		MyGui::mergeFont(FONT_AWESOME_PATH, 18.0f);
+		if (!radar_ui::mergeKoreanFont(*io.Fonts, "C:/Windows/Fonts/malgun.ttf", 18.0f))
+			log() << "[warning] font: Korean fallback unavailable; keeping existing fonts\n";
 	}
 
 	for (int i = 0; i < kPointWindowCount; ++i)
@@ -432,16 +539,13 @@ void MyApp::updateSensor()
 		m_networkRefreshTimer = 0.0f;
 	}
 
+	std::lock_guard lock(m_clientMutex);
 	if (m_connectionUpdated.load())
 	{
-		const retina::SensorSpec applied_spec = m_deviceInfo->sensorSpec;
-		*m_deviceInfo = m_client ? m_client->getDeviceInfo() : retina::DeviceInfo{};
-		m_deviceInfo->sensorSpec = applied_spec;
 		m_deviceInfoUpdated = true;
 		m_connectionUpdated.store(false);
 	}
 
-	std::lock_guard lock(m_clientMutex);
 	if (!m_client)
 	{
 		m_lastFrame = retina::Frame{};
@@ -451,7 +555,10 @@ void MyApp::updateSensor()
 	m_client->getFrames([this](const std::deque<retina::Frame>& frames)
 		{
 			if (frames.empty())
+			{
+				m_lastFrame = retina::Frame{};
 				return;
+			}
 
 			m_lastFrame = frames.back();
 			m_lastBandwidthMbps = static_cast<float>(m_client->getBandwidthMbps());
@@ -737,32 +844,38 @@ void MyApp::connectToDeviceAsync(const std::string& host)
 			{
 				m_connectionStatus.store(ConnectionStatus::Connected);
 				m_connectionUpdated.store(true);
+				m_tcpConnected.store(true);
+				m_attemptEstablished.store(true);
 			});
+		m_client->setOnFrame([this](const retina::Frame&) { m_validFrameReceived.store(true); });
+		m_client->setOnDisconnected([this]()
+		{
+			if (!m_cancelConnection.load()) m_readFailure.store(true);
+			m_connectionStatus.store(ConnectionStatus::Disconnected);
+		});
+		if (m_cancelConnection.load()) m_client->shutdown();
 	}
 
 	try
 	{
-		m_io->run();
+		const auto handlers = m_io->run();
+		log() << "[info] network: io_context.run returned handlers=" << handlers
+			<< " eventUnixMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::system_clock::now().time_since_epoch()).count() << '\n';
 	}
 	catch (const std::exception& e)
 	{
-		{
-			std::lock_guard<std::mutex> lock(m_clientMutex);
-			m_client.reset();
-		}
-
+		m_workerException = true;
 		m_connectionStatus.store(ConnectionStatus::Failed);
-		log() << "[fatal] network: " << e.what() << "\n";
-	}
-
-	{
-		std::lock_guard<std::mutex> lock(m_clientMutex);
-		m_client.reset();
+		log() << "[fatal] network: io_context.run exception eventUnixMs="
+			<< std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::system_clock::now().time_since_epoch()).count()
+			<< " message=" << e.what() << '\n';
 	}
 
 	m_connectionStatus.store(ConnectionStatus::Disconnected);
 	m_connectionUpdated.store(true);
-	m_io->restart();
+	m_workerDone.store(true);
 }
 
 std::ostream& MyApp::log()
