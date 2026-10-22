@@ -3,6 +3,7 @@
 #include <common/os/network.h>
 #include <common/pcr/pcr_type.h>
 #include <common/util/debug_console.h>
+#include "device/reconnect_policy.h"
 
 #include <atomic>
 #include <iosfwd>
@@ -94,6 +95,10 @@ private:
 	void limitFrameRate(float fps) const;
 
 	void connectToDeviceAsync(const std::string& host);
+	void cancelOrDisconnectImpl(const char* reason);
+	void updateConnection();
+	void finishConnectionAttempt();
+	void stopRecordingForConnectionLoss();
 
 	std::ostream& log();
 
@@ -154,6 +159,19 @@ private:
 
 	std::unique_ptr<asio::io_context> m_io;
 	std::thread m_ioThread;
+	std::atomic<bool> m_cancelConnection{ false };
+	std::atomic<bool> m_workerDone{ true };
+	std::atomic<bool> m_readFailure{ false };
+	std::atomic<bool> m_tcpConnected{ false };
+	std::atomic<bool> m_attemptEstablished{ false };
+	std::atomic<bool> m_validFrameReceived{ false };
+	bool m_connectionWanted = false;
+	bool m_workerException = false; // Read by the UI only after m_workerDone.
+	bool m_recoveryAnnounced = false;
+	bool m_connectionLossHandled = false;
+	std::string m_lastConnectedHost;
+	retina::ReconnectPolicy m_reconnect;
+	retina::ReconnectPolicy::Clock::time_point m_firstValidAt{};
 
 	std::unique_ptr<retina::DeviceInfo> m_deviceInfo;
 	pcr::Frame m_lastFrame;

@@ -1,6 +1,7 @@
 #include "retina.h"
 
 #include <common/os/network.h>
+#include <common/util/utf8.h>
 
 #include <algorithm>
 #include <atomic>
@@ -24,7 +25,7 @@ namespace retina
 	{
 		kHttpPort = 8000,
 		kDevicePort = 29172,
-		kProveTimeoutMs = 100
+		kDiscoveryProbeTimeoutMs = 1000
 	};
 
 	enum : uint32_t
@@ -177,8 +178,10 @@ namespace retina
 
 		workers.reserve(worker_count);
 
-		m_canceled.store(false, std::memory_order_release);
-		m_ioContexts.resize(worker_count, nullptr);
+		{
+			std::lock_guard lock(m_mutex);
+			m_ioContexts.resize(worker_count, nullptr);
+		}
 
 		for (uint32_t i = 0; i < worker_count; ++i)
 		{
@@ -218,7 +221,10 @@ namespace retina
 
 		for (std::thread& worker : workers)
 			worker.join();
-		m_ioContexts.clear();
+		{
+			std::lock_guard lock(m_mutex);
+			m_ioContexts.clear();
+		}
 
 		if (m_canceled.load(std::memory_order_acquire))
 		{
@@ -268,7 +274,7 @@ namespace retina
 
 	bool DeviceFinder::probeHost(asio::io_context& io, const std::string& ip)
 	{
-		auto timeout = std::chrono::milliseconds(kProveTimeoutMs);
+		auto timeout = std::chrono::milliseconds(kDiscoveryProbeTimeoutMs);
 
 		if (!probeTcpPort(io, ip, kDevicePort, timeout))
 			return false;
@@ -389,11 +395,12 @@ namespace retina
 			std::to_string(kDevicePort),
 			[this, host](const std::error_code& ec, tcp::resolver::results_type endpoints)
 			{
+				if (m_shutdownRequested.load()) return;
 				m_log << "[info] try resolving " << host << ':' << kDevicePort << "...\n";
 	
 				if (ec)
 				{
-					m_log << "[error] retina: resolve failed: " << ec.message() << '\n';
+					m_log << "[error] retina: resolve failed: " << os::text::errorMessageUtf8(ec) << '\n';
 					return;
 				}
 
@@ -403,6 +410,9 @@ namespace retina
 
 	DeviceClient::~DeviceClient()
 	{
+		m_log << "[info] retina: connection object cleanup eventUnixMs="
+			<< std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::system_clock::now().time_since_epoch()).count() << '\n';
 		shutdown();
 	}
 
@@ -437,6 +447,7 @@ namespace retina
 
 	double DeviceClient::getFrameRate() const
 	{
+		// MyApp calls this while getFrames() holds m_mutex.
 		if (m_totalDurationUs > 0)
 			return (m_totalFrames - 1) * 1e6 / m_totalDurationUs;
 		return 0.0;
@@ -444,6 +455,7 @@ namespace retina
 
 	double DeviceClient::getBandwidthMbps(uint64_t interval_ms) const
 	{
+		// MyApp calls this while getFrames() holds m_mutex.
 		uint64_t now = detail::get_steady_us();
 
 		while (!m_bandwidthSamples.empty() && now - m_bandwidthSamples.front().first > interval_ms * 1000) {
@@ -461,6 +473,10 @@ namespace retina
 
 	void DeviceClient::shutdown()
 	{
+		if (!m_shutdownRequested.exchange(true))
+			m_log << "[info] retina: socket shutdown requested eventUnixMs="
+				<< std::chrono::duration_cast<std::chrono::milliseconds>(
+					std::chrono::system_clock::now().time_since_epoch()).count() << '\n';
 		std::error_code ec;
 		m_resolver.cancel();
 		m_socket.cancel(ec);
@@ -475,14 +491,16 @@ namespace retina
 			endpoints,
 			[this](const std::error_code& ec, const tcp::endpoint& endpoint)
 			{
+				if (m_shutdownRequested.load()) return;
 				if (ec)
 				{
-					m_log << "[error] retina: connect failed: " << ec.message() << '\n';
+					m_log << "[error] retina: connect failed: " << os::text::errorMessageUtf8(ec) << '\n';
 					return;
 				}
 
 				asio::socket_base::keep_alive option(true);
 				m_socket.set_option(option);
+				m_connectedAtUs = detail::get_steady_us();
 	
 				std::string mac;
 				std::string ip = endpoint.address().to_string();
@@ -490,7 +508,9 @@ namespace retina
 
 				m_log << "[info] connected to "
 					<< endpoint.address().to_string()
-					<< ':' << endpoint.port() << '\n';
+					<< ':' << endpoint.port()
+					<< " eventUnixMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+						std::chrono::system_clock::now().time_since_epoch()).count() << '\n';
 
 				m_deviceInfo.ip = ip;
 				m_deviceInfo.model = "RETINA-4SN";
@@ -516,25 +536,52 @@ namespace retina
 
 	void DeviceClient::doRead()
 	{
+		if (m_shutdownRequested.load()) return;
 		m_socket.async_read_some(
 			asio::buffer(m_readBuf),
 			[this](const std::error_code& ec, std::size_t bytes)
 			{
 				if (ec)
 				{
-					m_log << "[error] retina: read failed: " << ec.message() << '\n';
-					if (m_onDisconnected)
+					const auto now = detail::get_steady_us();
+					const auto ageMs = [now](uint64_t timestamp) -> int64_t
+					{
+						return timestamp == 0 ? -1 : static_cast<int64_t>((now - timestamp) / 1000);
+					};
+					const bool requested = m_shutdownRequested.load();
+					std::ostringstream diagnostic;
+					diagnostic << (requested ? "[info] retina: read ended during shutdown" : "[error] retina: read failed")
+						<< " eventUnixMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+							std::chrono::system_clock::now().time_since_epoch()).count()
+						<< " connectedMs=" << ageMs(m_connectedAtUs)
+						<< " code=" << ec.value() << " category=" << ec.category().name()
+						<< " bytesTransferred=" << bytes << " lastReceiveAgeMs=" << ageMs(m_lastReceiveAtUs)
+						<< " lastValidFrameAgeMs=" << ageMs(m_lastValidFrameAtUs)
+						<< " shutdownRequested=" << requested << " message=" << os::text::errorMessageUtf8(ec) << '\n';
+					m_log << diagnostic.str();
+					const bool retryable = ec == asio::error::eof || ec == asio::error::connection_reset ||
+						ec == asio::error::connection_aborted || ec == asio::error::timed_out ||
+						ec == asio::error::network_down || ec == asio::error::network_reset ||
+						ec == asio::error::network_unreachable || ec == asio::error::host_unreachable ||
+						ec == asio::error::broken_pipe || ec == asio::error::not_connected;
+					if (!requested && retryable && m_onDisconnected)
 						m_onDisconnected();
 					return;
 				}
+				if (m_shutdownRequested.load()) return;
 	
 				auto first = m_readBuf.begin();
+				if (bytes > 0)
+					m_lastReceiveAtUs = detail::get_steady_us();
 				auto last = m_readBuf.begin() + bytes;
 	
 				m_streamBuf.insert(m_streamBuf.end(), first, last);
 
-				m_bandwidthSamples.emplace_back(detail::get_steady_us(), bytes);
-				m_bandwidthTotalBytes += bytes;
+				{
+					std::lock_guard lock(m_mutex);
+					m_bandwidthSamples.emplace_back(detail::get_steady_us(), bytes);
+					m_bandwidthTotalBytes += bytes;
+				}
 	
 				while (true)
 				{
@@ -544,6 +591,7 @@ namespace retina
 					Frame frame;
 					if (parseSinglePacket(m_packetBuf, frame))
 					{
+						m_lastValidFrameAtUs = detail::get_steady_us();
 						{
 							std::lock_guard<std::mutex> lock(m_mutex);
 
@@ -560,7 +608,10 @@ namespace retina
 						if (m_onFrame)
 							m_onFrame(frame);
 
-						m_frames.push_back(std::move(frame));
+						{
+							std::lock_guard lock(m_mutex);
+							m_frames.push_back(std::move(frame));
+						}
 					}
 					else
 					{

@@ -1,9 +1,11 @@
 #include "recording_window.h"
 #include "../../my_app.h"
 #include "../../device/retina.h"
+#include "../recording_path.h"
 
 #include <common/os/dialog.h>
 #include <common/ui/imgui_custom.h>
+#include <common/util/utf8.h>
 
 #include <algorithm>
 #include <chrono>
@@ -11,51 +13,10 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
-
-namespace
-{
-	static std::string make_timestamp_name()
-	{
-		using namespace std::chrono;
-	
-		const auto now = system_clock::now();
-		const std::time_t now_time = system_clock::to_time_t(now);
-		std::tm local_tm{};
-	#ifdef _WIN32
-		localtime_s(&local_tm, &now_time);
-	#else
-		local_tm = *std::localtime(&now_time);
-	#endif
-		std::ostringstream oss;
-		oss << std::put_time(&local_tm, "%Y%m%d_%H%M%S");
-		return oss.str();
-	}
-	
-	static std::string format_output_path(std::string directory, std::string file_name)
-	{
-		namespace fs = std::filesystem;
-	
-		if (directory.empty())
-			directory = ".";
-		if (file_name.empty())
-			file_name = make_timestamp_name();
-	
-		fs::path dir_path(directory);
-		fs::path base_path = dir_path / file_name;
-		fs::path candidate = base_path;
-		candidate += ".pcr";
-	
-		int suffix = 1;
-		while (fs::exists(candidate))
-		{
-			candidate = (dir_path / (file_name + "(" + std::to_string(suffix) + ")"));
-			candidate += ".pcr";
-			++suffix;
-		}
-	
-		return candidate.string();
-	}
-}
+#include <utility>
+#ifdef _WIN32
+#include <shellapi.h>
+#endif
 
 RecordingWindow::RecordingWindow() :
 	DockingWindow("Recording")
@@ -88,13 +49,15 @@ void RecordingWindow::onUpdate()
 
 	if (!m_pendingOpenPath.empty())
 	{
-		onFileOpen(m_pendingOpenPath.c_str());
-		m_pendingOpenPath.clear();
+		const auto path = std::exchange(m_pendingOpenPath, {});
+		try { onFileOpen(path); }
+		catch (const std::exception& error) { reportPathError(error); }
 	}
 	if (!m_pendingImportPath.empty())
 	{
-		onImportFile(m_pendingImportPath.c_str());
-		m_pendingImportPath.clear();
+		const auto path = std::exchange(m_pendingImportPath, {});
+		try { onImportFile(path); }
+		catch (const std::exception& error) { reportPathError(error); }
 	}
 	if (m_hasPendingDelete)
 	{
@@ -114,11 +77,27 @@ void RecordingWindow::onDraw(const ImVec2& size)
 
 void RecordingWindow::onFolderOpen(const char* dir)
 {
-	std::strcpy(m_folderNameBuf, dir);
+	const auto path = os::text::dialogPathToNative(dir);
+	recording_path::validatePath(path);
+	recording_path::copyUtf8(m_folderNameBuf, os::text::pathToUtf8(path));
 }
 
-void RecordingWindow::onFileOpen(const char* path)
+void RecordingWindow::reportPathError(const std::exception& error)
 {
+	log() << "[error] recording: " << recording_path::errorMessage(error) << '\n';
+}
+
+void RecordingWindow::onFileOpen(const std::filesystem::path& path)
+{
+	recording_path::validatePath(path);
+	auto parent = path.parent_path().lexically_relative(std::filesystem::current_path());
+	if (parent.empty()) parent = path.parent_path();
+	if (parent.empty()) parent = ".";
+	const auto folderText = os::text::pathToUtf8(parent);
+	const auto fileText = os::text::pathToUtf8(path.stem());
+	// Reject oversized dialog selections before changing the recorder or either input.
+	recording_path::validateBufferText(folderText, sizeof(m_folderNameBuf));
+	recording_path::validateBufferText(fileText, sizeof(m_fileNameBuf));
 	std::ifstream file(path, std::ios::binary);
 
 	PointCloudRecorder new_recorder;
@@ -127,7 +106,7 @@ void RecordingWindow::onFileOpen(const char* path)
 	{
 		m_recorder = std::move(new_recorder);
 
-		log() << "[info] recording: successfully loaded file: " << path << "\n";
+		log() << "[info] recording: successfully loaded file: " << os::text::pathToUtf8(path) << "\n";
 
 		if (!m_recorder.empty())
 		{
@@ -142,24 +121,18 @@ void RecordingWindow::onFileOpen(const char* path)
 			m_currFrameIdx = -1;
 		}
 
-		namespace fs = std::filesystem;
-
-		const auto file_path = fs::path(path);
-		const auto working_dir = fs::current_path();
-		const auto parent = fs::relative(file_path.parent_path(), working_dir);
-		const auto filename = file_path.filename().replace_extension();
-
-		std::strcpy(m_folderNameBuf, parent.string().c_str());
-		std::strcpy(m_fileNameBuf, filename.string().c_str());
+		recording_path::copyUtf8(m_folderNameBuf, folderText);
+		recording_path::copyUtf8(m_fileNameBuf, fileText);
 	}
 	else
 	{
-		log() << "[error] recording: the file: " << path << " is invalid or corrupted\n";
+		log() << "[error] recording: the file: " << os::text::pathToUtf8(path) << " is invalid or corrupted\n";
 	}
 }
 
-void RecordingWindow::onImportFile(const char* path)
+void RecordingWindow::onImportFile(const std::filesystem::path& path)
 {
+	recording_path::validatePath(path);
 	std::ifstream file(path, std::ios::binary);
 
 	PointCloudRecorder new_recorder;
@@ -168,7 +141,7 @@ void RecordingWindow::onImportFile(const char* path)
 	{
 		m_recorder.importFrom(std::move(new_recorder));
 
-		log() << "[info] recording: successfully imported file: " << path << "\n";
+		log() << "[info] recording: successfully imported file: " << os::text::pathToUtf8(path) << "\n";
 
 		if (!m_recorder.empty())
 		{
@@ -185,26 +158,34 @@ void RecordingWindow::onImportFile(const char* path)
 	}
 	else
 	{
-		log() << "[error] recording: the file: " << path << " is invalid or corrupted\n";
+		log() << "[error] recording: the file: " << os::text::pathToUtf8(path) << " is invalid or corrupted\n";
 	}
 }
 
-void RecordingWindow::onFileSave(const char* path)
+void RecordingWindow::onFileSave(const std::filesystem::path& path)
 {
 	namespace fs = std::filesystem;
 
-	fs::path out_path(path);
-	fs::path parent = out_path.parent_path();
+	recording_path::validatePath(path);
+	fs::path parent = path.parent_path();
 	
 	if (!parent.empty())
 	{
 		if (!fs::exists(parent))
-			log() << "[info] recording: creating output directories: " << parent << "\n";
+			log() << "[info] recording: creating output directories: " << os::text::pathToUtf8(parent) << "\n";
 
 		std::error_code ec;
 		fs::create_directories(parent, ec);
-		if (ec) log() << "[error] recording: failed to create directories: " << ec.message() << "\n";
+		if (ec) throw fs::filesystem_error("Failed to create directories", parent, ec);
 	}
+	std::ofstream file(path, std::ios::binary);
+	if (!file) throw std::runtime_error("Failed to create output file: " + os::text::pathToUtf8(path));
+	if (!m_recorder.serializeToStream(file)) throw std::runtime_error("Failed to serialize recording");
+	file.flush();
+	if (!file) throw std::runtime_error("Failed to write recording: " + os::text::pathToUtf8(path));
+	file.close();
+	if (file.fail()) throw std::runtime_error("Failed to close recording: " + os::text::pathToUtf8(path));
+	log() << "[info] recording saved to " << os::text::pathToUtf8(path) << '\n';
 }
 
 void RecordingWindow::onAddSessionButtonClicked()
@@ -280,21 +261,40 @@ void RecordingWindow::drawFileInfo(float content_width)
 	ImGui::SetCursorPosX(window_width - folder_btn_width - style.WindowPadding.x);
 	if (ImGui::Button("Open Folder", ImVec2(folder_btn_width, 0.0f)))
 	{
-		char dir[kFolderNameSize];
-		std::strcpy(dir, m_folderNameBuf);
+		char dir[kFolderNameSize]{};
 
 		auto res = os::openFolderDialog("Select Folder", dir, sizeof(dir));
 		if (res == os::FileDialogResult::OK)
-			onFolderOpen(dir);
+		{
+			try { onFolderOpen(dir); }
+			catch (const std::exception& error) { reportPathError(error); }
+		}
 		else if (res == os::FileDialogResult::Canceled)
 			log() << "[info] recording: folder open canceled\n";
 		else // Error
-			log() << "[error] recording: failed to open folder: " << dir << "\n";
+			log() << "[error] recording: failed to open folder: " << os::text::nativePathToUtf8(dir) << "\n";
 	}
 
 	ImGui::SetCursorPosX(window_width - folder_btn_width - style.WindowPadding.x);
 	if (ImGui::Button("Open in explorer", ImVec2(folder_btn_width, 0.0f)))
-		os::openFolderInExplorer(m_folderNameBuf);
+	{
+		try
+		{
+			const auto folder = os::text::pathFromUtf8(m_folderNameBuf[0] ? m_folderNameBuf : ".");
+			recording_path::validatePath(folder);
+#ifdef _WIN32
+			// Explorer already accepts Unicode; do not route this UTF-8 input through ACP.
+			auto absolute = std::filesystem::absolute(folder);
+			if (std::filesystem::is_regular_file(absolute)) absolute = absolute.parent_path();
+			if (!std::filesystem::exists(absolute)) std::filesystem::create_directories(absolute);
+			const auto result = reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", absolute.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+			if (result <= 32) throw std::runtime_error("Failed to open folder in Explorer (code " + std::to_string(result) + ")");
+#else
+			os::openFolderInExplorer(folder.c_str());
+#endif
+		}
+		catch (const std::exception& error) { reportPathError(error); }
+	}
 
 	// File
 	const float file_btn_width = 80.0f;
@@ -304,9 +304,11 @@ void RecordingWindow::drawFileInfo(float content_width)
 	ImGui::SetNextItemWidth(content_width);
 	ImGui::InputText("##File Name", m_fileNameBuf, sizeof(m_fileNameBuf));
 	
-	auto resolved = format_output_path(m_folderNameBuf, m_fileNameBuf);
+	std::string previewError;
+	const auto resolved = recording_path::previewOutputPath(m_folderNameBuf, m_fileNameBuf, previewError);
+	const auto preview = resolved.empty() ? previewError : os::text::pathToUtf8(resolved);
 	ImGui::TextUnformatted("file will be saved as:");
-	ImGui::TextWrapped(resolved.c_str());
+	ImGui::TextWrapped("%s", preview.c_str());
 
 	ImGui::SetCursorPosX(window_width - 3.0f * file_btn_width - 2.0f * style.ItemSpacing.x - style.WindowPadding.x);
 
@@ -315,16 +317,18 @@ void RecordingWindow::drawFileInfo(float content_width)
 		const char* title = "Open File";
 		const char* filter = "Point Cloud Recording (*.pcr)|*.pcr";
 
-		char path[512];
-		std::strcpy(path, resolved.c_str());
+		char path[512]{};
 
 		auto res = os::openFileDialog(title, filter, path, sizeof(path));
 		if (res == os::FileDialogResult::OK)
-			m_pendingOpenPath = path;
+		{
+			try { m_pendingOpenPath = os::text::dialogPathToNative(path); }
+			catch (const std::exception& error) { reportPathError(error); }
+		}
 		else if (res == os::FileDialogResult::Canceled)
 			log() << "[info] recording: file open canceled\n";
 		else // Error
-			log() << "[error] recording: failed to open file: " << path << "\n";
+			log() << "[error] recording: failed to open file: " << os::text::nativePathToUtf8(path) << "\n";
 	}
 
 	ImGui::SameLine();
@@ -333,41 +337,28 @@ void RecordingWindow::drawFileInfo(float content_width)
 		const char* title = "Import File";
 		const char* filter = "Point Cloud Recording (*.pcr)|*.pcr";
 
-		char path[512];
-		std::strcpy(path, resolved.c_str());
+		char path[512]{};
 
 		auto res = os::openFileDialog(title, filter, path, sizeof(path));
 		if (res == os::FileDialogResult::OK)
-			m_pendingImportPath = path;
+		{
+			try { m_pendingImportPath = os::text::dialogPathToNative(path); }
+			catch (const std::exception& error) { reportPathError(error); }
+		}
 		else if (res == os::FileDialogResult::Canceled)
 			log() << "[info] recording: file import canceled\n";
 		else // Error
-			log() << "[error] recording: failed to import file: " << path << "\n";
+			log() << "[error] recording: failed to import file: " << os::text::nativePathToUtf8(path) << "\n";
 	}
 	
 	ImGui::SameLine();
+	ImGui::BeginDisabled(resolved.empty());
 	if (ImGui::Button("Save", ImVec2(file_btn_width, 0.0f)))
 	{
-		try
-		{
-			onFileSave(resolved.c_str());
-		}
-		catch (const std::exception& e)
-		{
-			log() << "[error] recording: exception while creating directories: " << e.what() << "\n";
-		}
-
-		std::ofstream file(resolved, std::ios::binary);
-		if (file)
-		{
-			m_recorder.serializeToStream(file);
-			log() << "[info] recording saved to " << resolved << "\n";
-		}
-		else
-		{
-			log() << "[error] recording: failed to create output file: " << resolved << "\n";
-		}
+		try { onFileSave(resolved); }
+		catch (const std::exception& error) { reportPathError(error); }
 	}
+	ImGui::EndDisabled();
 }
 
 void RecordingWindow::drawSessionList(float content_width)

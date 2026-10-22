@@ -12,6 +12,7 @@
 class PointCloudWindow : public DockingWindow
 {
 	friend class AnalysisWindow;
+	friend class MyApp;
 
 public:
 	enum class WindowSource
@@ -49,6 +50,8 @@ private:
 
 	void onPlayButtonClicked();
 	void onRecordButtonClicked();
+	void stopForConnectionLoss(const char* reason = "connection_lost");
+	bool beginRecording();
 	void onTrimLeftButtonClicked();
 	void onTrimRightButtonClicked();
 
@@ -94,6 +97,7 @@ private:
 
 	int m_recordMaxFrameLength = INT32_MAX;
 	bool m_isRecording = false;
+	bool m_newSessionRequired = false;
 
 	bool m_showTargets = false;
 	bool m_showGizmo = true;

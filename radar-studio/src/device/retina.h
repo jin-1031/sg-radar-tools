@@ -74,7 +74,7 @@ namespace retina
 
 		std::vector<asio::io_context*> m_ioContexts;
 		std::mutex m_mutex;
-		std::atomic_bool m_canceled;
+		std::atomic_bool m_canceled{ false };
 	};
 
 	class DeviceClient
@@ -109,6 +109,11 @@ namespace retina
 	private:
 		asio::io_context& m_io;
 		std::ostream& m_log;
+		std::atomic_bool m_shutdownRequested{ false };
+		// Diagnostic timestamps are accessed only by the I/O thread (steady-clock microseconds).
+		uint64_t m_connectedAtUs = 0;
+		uint64_t m_lastReceiveAtUs = 0;
+		uint64_t m_lastValidFrameAtUs = 0;
 		tcp::resolver m_resolver;
 		tcp::socket m_socket;
 
