@@ -8,6 +8,8 @@
 
 namespace
 {
+	constexpr int kServerListenBacklog = 1;
+
 	const char* httpResponse =
 		"HTTP/1.1 200 OK\r\n"
 		"Content-Type: text/plain\r\n"
@@ -119,7 +121,7 @@ bool MockServer::start()
 		stop();
 		return false;
 	}
-	m_httpAcceptor->listen(asio::socket_base::max_listen_connections, ec);
+	m_httpAcceptor->listen(kServerListenBacklog, ec);
 	if (ec)
 	{
 		setLastError("Failed to listen on HTTP port 8000.");
@@ -143,7 +145,7 @@ bool MockServer::start()
 		stop();
 		return false;
 	}
-	m_deviceAcceptor->listen(asio::socket_base::max_listen_connections, ec);
+	m_deviceAcceptor->listen(kServerListenBacklog, ec);
 	if (ec)
 	{
 		setLastError("Failed to listen on device port 29172.");
