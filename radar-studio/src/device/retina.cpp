@@ -120,7 +120,7 @@ namespace retina
 			template <typename T>
 			bool read(T& out)
 			{
-				if (m_offset + sizeof(T) > m_size)
+				if (sizeof(T) > remaining())
 					return false;
 		
 				std::memcpy(&out, m_data + m_offset, sizeof(T));
@@ -133,7 +133,7 @@ namespace retina
 			template <typename T>
 			bool peek(T& out)
 			{
-				if (m_offset + sizeof(T) > m_size)
+				if (sizeof(T) > remaining())
 					return false;
 		
 				std::memcpy(&out, m_data + m_offset, sizeof(T));
@@ -592,6 +592,7 @@ namespace retina
 					if (parseSinglePacket(m_packetBuf, frame))
 					{
 						m_lastValidFrameAtUs = detail::get_steady_us();
+						stampSuccessfulFrame(frame, m_lastValidFrameAtUs);
 						{
 							std::lock_guard<std::mutex> lock(m_mutex);
 
@@ -625,58 +626,49 @@ namespace retina
 	
 	bool DeviceClient::tryExtractPacket(std::vector<uint8_t>& stream_buf, std::vector<uint8_t>& out_packet_buf)
 	{
-		size_t packet_magic_offset;
-	
-		if (!findPacketMagic(stream_buf, packet_magic_offset))
+		for (;;)
 		{
-			// Keep last few bytes in case magic spans chunk boundary
-			if (stream_buf.size() > 7)
-				stream_buf.erase(stream_buf.begin(), stream_buf.end() - 7);
-	
-			return false;
-		}
-	
-		if (packet_magic_offset < 4)
-		{
-			return false;
-		}
-	
-		if (packet_magic_offset > 4)
-		{
-			stream_buf.erase(stream_buf.begin(), stream_buf.begin() + packet_magic_offset - 4);
-		}
-	
-		if (stream_buf.size() < sizeof(RetinaPacketHeaderRaw))
-			return false;
-	
-		RetinaPacketHeaderRaw packet_header{};
-		memcpy(&packet_header, stream_buf.data(), sizeof(RetinaPacketHeaderRaw));
-	
-		assert(packet_header.magic == kPacketMagic);
-	
-		size_t packet_size = sizeof(RetinaPacketHeaderRaw) + packet_header.packageSize;
-	
-		if (stream_buf.size() >= packet_size)
-		{
+			size_t packet_magic_offset;
+			if (!findPacketMagic(stream_buf, packet_magic_offset))
+			{
+				// Preserve the reserved word plus a partial magic across TCP reads.
+				if (stream_buf.size() > 7)
+					stream_buf.erase(stream_buf.begin(), stream_buf.end() - 7);
+				return false;
+			}
+
+			if (packet_magic_offset > 4)
+				stream_buf.erase(stream_buf.begin(), stream_buf.begin() + packet_magic_offset - 4);
+			if (stream_buf.size() < sizeof(RetinaPacketHeaderRaw))
+				return false;
+
+			RetinaPacketHeaderRaw packet_header{};
+			std::memcpy(&packet_header, stream_buf.data(), sizeof(packet_header));
+			if (packet_header.packageSize < sizeof(RetinaFrameHeaderRaw) ||
+				packet_header.packageSize > kMaxFrameSize)
+			{
+				m_log << "[error] retina: invalid packet payload size: " << packet_header.packageSize << '\n';
+				stream_buf.erase(stream_buf.begin());
+				continue;
+			}
+
+			const size_t packet_size = sizeof(RetinaPacketHeaderRaw) + static_cast<size_t>(packet_header.packageSize);
+			if (stream_buf.size() < packet_size)
+				return false;
 			out_packet_buf.assign(stream_buf.begin(), stream_buf.begin() + packet_size);
 			stream_buf.erase(stream_buf.begin(), stream_buf.begin() + packet_size);
-	
 			return true;
 		}
-	
-		return false;
 	}
-	
+
+	void DeviceClient::stampSuccessfulFrame(Frame& frame, uint64_t now)
+	{
+		frame.deltaUs = m_lastFrameTimepoint ? now - *m_lastFrameTimepoint : 0;
+		m_lastFrameTimepoint = now;
+	}
+
 	bool DeviceClient::parseSinglePacket(const std::vector<uint8_t>& packet_buf, Frame& out_frame)
 	{
-		uint64_t now = detail::get_steady_us();
-		
-		if (m_lastFrameTimepoint == 0)
-			out_frame.deltaUs = 0;
-		else
-			out_frame.deltaUs = now - m_lastFrameTimepoint;
-		m_lastFrameTimepoint = now;
-
 		detail::ByteReader reader(packet_buf.data(), packet_buf.size());
 	
 		RetinaPacketHeaderRaw packet_header{};
@@ -684,8 +676,12 @@ namespace retina
 	
 		CHECK_READ(reader.read(packet_header));
 	
-		assert(packet_header.magic == kPacketMagic);
-		assert(packet_header.packageSize == packet_buf.size() - sizeof(RetinaPacketHeaderRaw));
+		if (packet_header.magic != kPacketMagic || packet_header.packageSize > kMaxFrameSize ||
+			packet_header.packageSize != packet_buf.size() - sizeof(RetinaPacketHeaderRaw))
+		{
+			m_log << "[error] retina: invalid packet header or length\n";
+			return false;
+		}
 	
 		CHECK_READ(reader.read(frame_header));
 	
@@ -695,8 +691,15 @@ namespace retina
 			return false;
 		}
 	
-		uint32_t point_number = frame_header.targetNumber;
-		uint32_t target_number = 0;
+		const uint32_t point_number = frame_header.targetNumber;
+		// Division validates both arrays before allocation without overflowing count * stride.
+		constexpr size_t point_bytes = sizeof(float) * 5 + sizeof(int32_t);
+		if (point_number > reader.remaining() / point_bytes)
+		{
+			m_log << "[error] retina: truncated point/ID arrays count=" << point_number
+				<< " remaining=" << reader.remaining() << '\n';
+			return false;
+		}
 	
 		out_frame.packetSize = packet_header.packageSize;
 		out_frame.frameCount = frame_header.frameCount;
@@ -722,56 +725,72 @@ namespace retina
 		if (reader.remaining() == 0)
 			return true;
 	
-		CHECK_READ(reader.peek(frame_header));
-
-		if (frame_header.magic != kFrameMagic)
+		// An exact end after Point/ID is the existing Point-only format. Unknown trailing
+		// bytes still require a valid Target Header; padding-only packets are unconfirmed.
+		if (!reader.peek(frame_header) || frame_header.magic != kFrameMagic)
 		{
-			reader.seek(kTargetOffset);
-
-			CHECK_READ(reader.read(frame_header));
-	
-			if (frame_header.magic != kFrameMagic)
+			if (kTargetOffset < reader.offset() || !reader.seek(kTargetOffset))
 			{
-				m_log << "[error] retina: invalid frame magic for target section: " << std::hex << frame_header.magic << std::dec << '\n';
+				m_log << "[error] retina: target offset unavailable offset=" << kTargetOffset
+					<< " pointEnd=" << reader.offset() << " packetBytes=" << packet_buf.size() << '\n';
 				return false;
 			}
-	
-			assert(frame_header.frameCount == out_frame.frameCount);
-	
-			target_number = frame_header.targetNumber;
-			out_frame.targets.reserve(target_number);
-	
-			for (uint32_t i = 0; i < target_number; ++i)
-			{
-				RetinaTargetRaw target_raw;
-				CHECK_READ(reader.read(target_raw));
-	
-				Target target{};
-				target.minx = target.miny = target.minz = std::numeric_limits<float>::max();
-				target.maxx = target.maxy = target.maxz = std::numeric_limits<float>::lowest();
-	
-				target.x = target_raw.x;
-				target.y = target_raw.y;
-				target.status = target_raw.status;
-				target.targetId = target_raw.targetId;
-	
-				for (const auto& p : out_frame.points)
-				{
-					if (p.targetId == target.targetId)
-					{
-						target.minx = std::min(target.minx, p.x);
-						target.maxx = std::max(target.maxx, p.x);
-						target.miny = std::min(target.miny, p.y);
-						target.maxy = std::max(target.maxy, p.y);
-						target.minz = std::min(target.minz, p.z);
-						target.maxz = std::max(target.maxz, p.z);
-					}
-				}
-	
-				out_frame.targets.push_back(target);
-			}
 		}
-	
+		if (!reader.read(frame_header))
+		{
+			m_log << "[error] retina: truncated target header offset=" << reader.offset()
+				<< " remaining=" << reader.remaining() << '\n';
+			return false;
+		}
+		if (frame_header.magic != kFrameMagic)
+		{
+			m_log << "[error] retina: invalid frame magic for target section: " << std::hex
+				<< frame_header.magic << std::dec << " offset=" << reader.offset() - sizeof(frame_header) << '\n';
+			return false;
+		}
+		if (frame_header.frameCount != out_frame.frameCount)
+		{
+			m_log << "[error] retina: target frame count mismatch point=" << out_frame.frameCount
+				<< " target=" << frame_header.frameCount << '\n';
+			return false;
+		}
+
+		const uint32_t target_number = frame_header.targetNumber;
+		if (target_number > reader.remaining() / sizeof(RetinaTargetRaw))
+		{
+			m_log << "[error] retina: truncated target array count=" << target_number
+				<< " remaining=" << reader.remaining() << '\n';
+			return false;
+		}
+		out_frame.targets.reserve(target_number);
+		for (uint32_t i = 0; i < target_number; ++i)
+		{
+			RetinaTargetRaw target_raw;
+			CHECK_READ(reader.read(target_raw));
+
+			Target target{};
+			target.minx = target.miny = target.minz = std::numeric_limits<float>::max();
+			target.maxx = target.maxy = target.maxz = std::numeric_limits<float>::lowest();
+			target.x = target_raw.x;
+			target.y = target_raw.y;
+			target.status = target_raw.status;
+			target.targetId = target_raw.targetId;
+
+			for (const auto& p : out_frame.points)
+			{
+				if (p.targetId == target.targetId)
+				{
+					target.minx = std::min(target.minx, p.x);
+					target.maxx = std::max(target.maxx, p.x);
+					target.miny = std::min(target.miny, p.y);
+					target.maxy = std::max(target.maxy, p.y);
+					target.minz = std::min(target.minz, p.z);
+					target.maxz = std::max(target.maxz, p.z);
+				}
+			}
+			out_frame.targets.push_back(target);
+		}
+
 		return true;
 	}
 	
@@ -780,9 +799,12 @@ namespace retina
 		if (buffer.size() < 4)
 			return false;
 	
-		for (size_t i = 0; i + 4 <= buffer.size(); ++i)
+		// A packet needs its four-byte reserved prefix before the magic.
+		for (size_t i = 4; i + 4 <= buffer.size(); ++i)
 		{
-			if (*reinterpret_cast<const uint32_t*>(buffer.data() + i) == kPacketMagic) {
+			uint32_t magic;
+			std::memcpy(&magic, buffer.data() + i, sizeof(magic));
+			if (magic == kPacketMagic) {
 				out_offset = i;
 				return true;
 			}

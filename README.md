@@ -366,7 +366,7 @@ Recording 입력은 UTF-8, 파일 접근은 Windows native Unicode 경로를 사
 
 오류 시 진행 중인 Record는 중단하지만 메모리 Session과 프레임은 보존합니다. 수신이 복구되어도 **Record는 자동 재개하지 않습니다.** 다시 Record를 시작하면 새 Session에 기록하고 기존 Save로 이전·새 Session을 함께 저장할 수 있습니다. 오류 시 자동 저장·파일 분리·flush/close·단절 시간 보정은 하지 않습니다.
 
-Studio는 최소화 상태에서도 재연결을 관리하지만 녹화는 UI 갱신에 의존해 모든 프레임의 백그라운드 기록을 보장하지 않습니다. 재연결 중 누락된 프레임은 복구하지 않습니다. 연결된 채 데이터만 멈추면 복구가 시작되지 않을 수 있습니다. 새 read timeout이나 keepalive 간격은 추가하지 않았으며, 모든 네트워크 문제를 해결하는 기능이 아닙니다. 실제 센서 장시간 검증은 별도로 필요합니다.
+Studio는 최소화 상태에서도 재연결을 관리합니다. 녹화는 파싱 성공 callback에서 FIFO에 접수하고 메인 루프가 렌더링 전에 Session에 반영하므로 최소화·Point Cloud 창 접힘 중에도 유지됩니다. FIFO 한도와 불완전 녹화 판정은 아래 「렌더링 독립 PCR 녹화」 절을 따릅니다. 재연결 중 누락된 프레임은 복구하지 않습니다. 연결된 채 데이터만 멈추면 복구가 시작되지 않을 수 있습니다. 새 read timeout이나 keepalive 간격은 추가하지 않았으며, 모든 네트워크 문제를 해결하는 기능이 아닙니다. 실제 센서 장시간 검증은 별도로 필요합니다.
 
 ### 진단 로그
 
@@ -411,15 +411,17 @@ radar-studio\tests\run_tests.cmd
 echo %ERRORLEVEL%
 ```
 
-4. 아래 6개 PASS 메시지와 종료 코드 `0`을 확인합니다. runner는 실패 시 중단합니다.
+4. 아래 8개 PASS 메시지와 종료 코드 `0`을 확인합니다. runner는 실패 시 중단합니다.
 
 ```text
+Retina parser tests PASS cases=23
 Reconnect policy tests PASS
 Retina connection tests PASS (loopback 29172)
 Recorder session roundtrip tests PASS
 UTF-8 log tests PASS
 Korean font tests PASS
 Recording UTF-8 path tests PASS
+Recording capture unit tests PASS cases=13
 ```
 
 일부 메시지에는 ACP 값이나 CPU 렌더링 설명이 덧붙습니다. 산출물은 Git 제외 대상 `radar-studio/x64/Release/tests/`에 생성합니다. TCP 테스트는 기존 Emulator encoder, loopback, EOF/RST, 명시적 취소·반복 연결을 검사합니다. Recorder Session roundtrip, UTF-8, CPU 글리프, Unicode 경로 Save/Open/Import, 미리보기 상태도 검사합니다. 실제 GUI/IME·레이더 장시간 시험은 별도입니다.
@@ -549,3 +551,137 @@ frame,timestamp_us,x,y,z,doppler,power,target_id
 원본 프로젝트는 [dandevlog0206/sg-radar-tools](https://github.com/dandevlog0206/sg-radar-tools)이며 이 포크는 원본 출처와 저작권을 유지합니다.
 
 코드는 [MIT License](LICENSE)로 공개됩니다. 원본 저작권은 `Copyright (c) 2026 www.dandevlog.com`입니다. 제3자 라이브러리는 [common/thirdparty/NOTICE.txt](common/thirdparty/NOTICE.txt)를 참고하세요. Font Awesome 폰트 `asset/font/fa-solid-900.ttf`는 SIL OFL 1.1이며 [폰트 라이선스](asset/font/LICENSE.txt)를 함께 제공합니다.
+
+### Target Section Parser 검증 (2026-11-04)
+
+Studio는 Point/ID 직후의 유효한 Target Header를 소비하고 Target 값을 읽습니다.
+직후 Header가 유효하지 않으면 기존 패킷 시작 기준 offset `48056`을 검사합니다.
+이동 실패, 짧은 Header/배열, frameCount 불일치, 남은 바이트로 수용할 수 없는 개수는 오류로 기록합니다.
+Point/ID에서 정확히 끝나는 Point-only 패킷은 허용합니다. 설명되지 않은 잔여 바이트를 padding으로 간주하는 성공 정책은 추가하지 않았습니다.
+기존 16 MiB 상수를 payload 상한으로 적용하며, 잘못된 길이의 네트워크 Header 뒤에서는 다음 패킷을 재탐색합니다.
+
+`retina_parser_test.cpp`는 기존 Emulator encoder로 Point-only, 연속/fixed-offset Target, 길이/개수 오류,
+float32/int32 값 보존, 분할·병합·잡음·손상 후 복구를 검사합니다.
+`retina_connection_test.cpp`는 loopback TCP에서 Target 값과 Point 경계도 확인합니다.
+이 fixture는 현재 코드의 패킷 가정을 검사합니다. 실제 센서의 ID int32/Uint8 차이,
+optional Target/padding 규칙과 fixed offset의 펌웨어별 의미는 원시 패킷 확인이 필요합니다.
+PCR 녹화·시간 계산, 자동 탐색·재연결, Backend 및 Emulator encoder는 이번 수정 범위 밖입니다.
+
+기존 EXE/object를 보존하려면 MSBuild의 `OutDir`와 `IntDir`을 별도 Git 제외 디렉터리로 지정합니다.
+테스트 runner는 선택적으로 첫 인자에 테스트 출력 경로, 둘째 인자에 **이번 Studio 빌드의 object 경로**를 받습니다.
+다음은 x64 Native Tools Command Prompt에서 사용하는 예시입니다.
+
+```bat
+radar-studio\tests\run_tests.cmd "C:\work\parser-check\tests" "C:\work\parser-check\obj"
+```
+
+서로 다른 소스 버전의 Recorder/zstd/ImGui object를 섞어 사용하지 마세요.
+
+
+### 렌더링 독립 PCR 녹화 (2026-11-04)
+
+파싱 성공 callback은 소유권 있는 프레임 복사본을 녹화 FIFO에 전달합니다.
+메인 루프는 최소화 분기와 렌더링 전에 FIFO 배치를 Session에 반영합니다.
+Point Cloud 창의 표시 큐(60프레임)는 녹화 전달에 사용하지 않습니다.
+하나의 실행에서 한 창/Session만 작성자가 되며, UI의 다른 Session 선택은 녹화 목적지를 바꾸지 않습니다.
+시작/중지는 callback과 동일한 mutex 경계로 구분합니다. 시작 이후 접수된 프레임만 대상이며,
+중지·연결 종료 시 접수를 닫고 기존 접수분을 배출합니다. 재연결 후 Record는 기존처럼 새 Session을 만듭니다.
+
+기본 FIFO 한도는 대기 512프레임 및 계산된 프레임 데이터 64MiB입니다.
+배치 처리 중인 프레임도 한도에 포함합니다. bytes는 Item/Point/Target 데이터 기준이며
+allocator overhead, 표시 이력, 완료된 Session 및 저장 압축 작업 메모리는 별도입니다.
+S0-3 평균 약 228 points/frame에서 512프레임은 약 3MiB, 20FPS에서는 약 25.6초 대기량입니다.
+프레임이 크면 바이트 한도가 먼저 적용됩니다. 한도를 넘으면 기존 접수분을 보존하고
+`complete=0`과 원인을 기록하며 녹화를 중단합니다. 자동 삭제나 재시도는 수행하지 않습니다.
+기존 Session 메모리는 계속 누적되므로 장시간 녹화 전체 메모리 한도를 보장하지 않습니다.
+MaxFrameLength는 녹화 시작 시 확정하며 해당 실행에서 정확히 제한합니다.
+
+새 빈 Session의 첫 기록 delta는 0이고, 이후 delta는 파싱 성공 시점의 steady-clock 간격입니다.
+실패 패킷은 성공 시각 기준을 갱신하지 않습니다. UI의 50,000us 보정은 제거했습니다.
+기존 Session에 Resume/삽입하는 첫 프레임은 기존처럼 입력 delta를 유지하며 Pause 전체 시간을 새로 더하지 않습니다.
+기존 PCR delta, 재생기의 200ms 초과 간격 보정, PCR 1.0 구조는 유지합니다.
+PC 수신 처리 시각이며 센서 측정 시각을 복원하는 기능은 아닙니다.
+
+활성 녹화 중 Save는 배출 시점까지의 snapshot을 저장하고 녹화를 계속합니다.
+Open/Import/Delete/Copy 및 프레임 내용 편집은 Pause 후 허용하며 거부 이유를 Console에 기록합니다.
+기존 Stop 버튼의 전체 프레임 삭제 의미는 유지합니다. `clearSession`/`splitSession` 등 기존 편집
+결함을 수정하지 않았으며, 시작 시 delta 합계와 lengthUs가 다르면 녹화를 거부합니다.
+해당 경우 새 Session을 사용하거나 기존 편집 결함을 별도 수정해야 합니다.
+
+Console의 `capture result`는 run/generation/Session, eligible/accepted/enqueueFailed/applied/pending,
+peakBytes/peakFrames, complete/error를 기록합니다. Save 성공은 파일 쓰기 성공이며,
+활성 녹화의 완료 판정은 아닙니다. 앱 실행 중 불완전 녹화가 있었다면 이후 snapshot에도 경고합니다.
+불완전 상태 진단은 Console에 남으며 PCR 1.0에 새 상태 필드를 추가하지 않았습니다.
+
+`recording_capture_test`는 렌더링 없는 배치 수집, 순서/중복 ID, 경계, 용량 초과, 세대 분리,
+삽입/시간 보존, snapshot, 동시 producer/consumer와 PCR 메모리 round-trip을 검사합니다.
+runner는 `--loopback`으로 기존 Emulator encoder의 FIN/RST 수신과 마지막 프레임 배출도 검사합니다.
+기존 파일 검증은 `recording_capture_test.exe --pcr <기존 PCR>`로 읽기 전용 수행할 수 있습니다.
+최소화·접힘과 실제 센서 녹화의 수동 검증 결과는 아래에 기록합니다. 파일 대화상자 전체 동작 및 GUI Open 조작의 검증 범위는 PCR 재로딩 도구 결과와 구분합니다.
+
+
+2026-11-04 최초 자동 검증에서는 격리 Studio x64 Release Build, Parser 23개,
+신규 녹화 unit 13개, AddressSanitizer unit 13개, 새 FIN/RST loopback 및 기존 S0-3
+PCR 메모리 Save/Load 비교가 통과했습니다. 기존 C++ 연결 테스트는 listen 단계의
+잘못된 포인터 오류 메시지로 실패했으며 원시 숫자 코드는 그 테스트가 출력하지 않았습니다.
+전체 runner는 실패로 기록했고, 중단 뒤의 미실행 테스트만 별도 실행했습니다.
+실제 GUI 최소화·접힘·파일 대화상자 및 실제 센서 녹화는 이번 자동 검증에 포함되지 않습니다.
+Resume/삽입의 재로딩 비교는 해당 실행의 삽입 구간을 기준으로 하며 기존 Session 전체 프레임 수와 구분합니다.
+
+
+### RETINA-4SN 실센서 수동 검증 (2026-11-04)
+
+사용자가 실제 센서 연결과 GUI 조작을 수행했습니다. 저장된 PCR은 기존 Python loader 및
+C++ Recorder의 메모리 Save/Load round-trip으로 검증했습니다. 아래 결과는 해당 관찰 구간과
+저장 데이터에 대한 결과입니다.
+
+| 녹화 검증 항목 | 결과 |
+|---|---|
+| 최종 저장·재로딩 프레임 | 3,843 |
+| Point 수 | 505,831 |
+| run 6~13의 eligible / accepted / applied 합계 | 각각 3,843 |
+| enqueueFailed / pending | 각각 0 |
+| 각 run의 complete / error | 1 / none |
+| 첫 기록 deltaUs | 0 |
+| deltaUs 합계 / Session lengthUs | 각각 192,118,716µs |
+| 녹화 중 snapshot | 1,887프레임이 최종 PCR 앞부분과 바이트 단위 일치 |
+| 최소화·Point Cloud 창 접힘 | 사용자 확인상 녹화 유지, 접수·반영·저장 수 일치 |
+
+파일에는 빈 Session 0과 녹화 Session 1이 있습니다. 녹화 구간 내부의 Frame ID는 연속적이며
+중복·역순이 없었습니다. ID 점프 7건은 Pause 후 재시작 경계와 일치했습니다.
+Session 길이는 저장된 delta의 합계이며 Pause를 포함한 시험 전체 벽시계 경과 시간과 구분합니다.
+최소화·복원·접힘의 정확한 조작 시각별 프레임 대응은 확보하지 못했습니다.
+
+연결 안정성 단계의 시작·종료 신호 기록은 KST 20:15:44.2945217~20:20:58.6720076으로
+약 5분 14초 간격입니다. 사용자 관찰에서 Point Cloud 출력이 지속됐고, 종료 확인 시 TCP는
+Established, Studio PID는 동일했습니다. 해당 구간에 TCP 10054·자동 재연결·충돌 보고가 없었으며
+조회한 Studio 오류 및 WLAN 이벤트도 없었습니다. 이 시간은 메시지 처리 기준이며 연속 패킷
+추적으로 측정한 연결 시간과 구분합니다.
+
+실제 Target 레코드는 0개여서 Target Section 내용과 센서 전체 wire layout은 미검증입니다.
+Point별 Target ID 253·254·255의 의미, 센서 전체 송신 프레임 대비 수신 누락 여부도 미확정입니다.
+1단계의 일시적인 CLOSED 관찰과 이후 Established 사이의 재연결 여부는 로그 부족으로 미확정입니다.
+과거 TCP 10054 원인과 자동 GUI 조작 중 GLFW 접근 위반 원인은 별도 미해결 사항입니다.
+이번 수동 시험 성공만으로 해당 문제가 해결됐다고 판단하지 않습니다.
+
+### TCP 연결 테스트 실패 진단
+
+`retina_connection_test`는 실행 시작·실패의 Unix millisecond 시각, PID, 하위 시험명과 반복 회차,
+실패 단계, fixture 로컬 주소·포트, 기본 backlog, 예외에 보존된 오류 코드·category·UTF-8 메시지를
+출력합니다. `io.run_for`나 `cleanup`은 실행 구간을 뜻하며 단일 Native API 이름을 뜻하지 않습니다.
+숫자 오류 코드가 없는 assertion 등의 실패는 `code=unavailable`로 표시합니다.
+기존 소켓 호출 순서, 기본 backlog, 옵션, assertion 및 실패 종료 코드는 유지합니다.
+
+
+같은 날 진단 보완 후 x64 Release 설정으로 테스트 실행 파일 8개를 격리 빌드했습니다.
+단독 10회를 계획했으나 3회 PASS 후 반복을 중단했습니다. 종료 확인된 테스트 뒤의 포트 조회에서
+PID 0의 LISTENING 항목이 반복 관찰돼 실행 전 점검이 중단시켰습니다. 실행 중인 테스트나
+Emulator 프로세스는 관찰되지 않았으며, 후속 조회에서 해당 항목이 사라지기도 했습니다.
+소켓 API의 실패와 포트 상태 조회의 이상을 구분하며, 이 관찰만으로 원인을 확정하지 않습니다.
+
+분리 실행한 기본 C++ 테스트 실행 파일 8개는 모두 PASS였고 Parser 23개와 Recorder 13개를
+포함합니다. 연결 테스트는 전체 묶음 항목에서 추가 1회 PASS였습니다. 기존 S0-3 PCR의 메모리
+Save/Load 비교도 PASS였습니다. 새 FIN/RST 재실행은 포트 점검 중단으로 미수행이며,
+전체 runner가 한 번에 끝까지 성공한 것으로 기록하지 않습니다.
+이번 실행에서는 새 숫자 소켓 오류를 포착하지 못했습니다. 과거 메시지만 남은 listen 실패의
+숫자 코드와 원인, PID 0 포트 상태의 원인은 미확정이며 간헐적 실패 해결로 판단하지 않습니다.

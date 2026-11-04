@@ -11,6 +11,7 @@
 #include <functional>
 #include <mutex>
 #include <ostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -100,9 +101,12 @@ namespace retina
 		void shutdown();
 	
 	private:
+		friend struct DeviceClientParserTest;
+
 		void connectAsync(tcp::resolver::results_type endpoints);
 		void doRead();
 		bool tryExtractPacket(std::vector<uint8_t>& stream_buf, std::vector<uint8_t>& out_packet_buf);
+		void stampSuccessfulFrame(Frame& frame, uint64_t now);
 		bool parseSinglePacket(const std::vector<uint8_t>& packet_buf, Frame& out_frame);
 		bool findPacketMagic(const std::vector<uint8_t>& buffer, size_t& out_offset);
 
@@ -128,7 +132,7 @@ namespace retina
 		std::function<void()> m_onDisconnected;
 		std::function<void(const Frame&)> m_onFrame;
 
-		uint64_t m_lastFrameTimepoint = 0;
+		std::optional<uint64_t> m_lastFrameTimepoint;
 		uint64_t m_totalDurationUs = 0;
 		size_t m_totalFrames = 0;
 

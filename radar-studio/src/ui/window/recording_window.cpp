@@ -89,6 +89,7 @@ void RecordingWindow::reportPathError(const std::exception& error)
 
 void RecordingWindow::onFileOpen(const std::filesystem::path& path)
 {
+	if (!MyApp::get().recordingEditAllowed()) return;
 	recording_path::validatePath(path);
 	auto parent = path.parent_path().lexically_relative(std::filesystem::current_path());
 	if (parent.empty()) parent = path.parent_path();
@@ -123,6 +124,7 @@ void RecordingWindow::onFileOpen(const std::filesystem::path& path)
 
 		recording_path::copyUtf8(m_folderNameBuf, folderText);
 		recording_path::copyUtf8(m_fileNameBuf, fileText);
+		MyApp::get().refreshRecordingViews();
 	}
 	else
 	{
@@ -132,6 +134,7 @@ void RecordingWindow::onFileOpen(const std::filesystem::path& path)
 
 void RecordingWindow::onImportFile(const std::filesystem::path& path)
 {
+	if (!MyApp::get().recordingEditAllowed()) return;
 	recording_path::validatePath(path);
 	std::ifstream file(path, std::ios::binary);
 
@@ -141,6 +144,7 @@ void RecordingWindow::onImportFile(const std::filesystem::path& path)
 	{
 		m_recorder.importFrom(std::move(new_recorder));
 
+		MyApp::get().refreshRecordingViews();
 		log() << "[info] recording: successfully imported file: " << os::text::pathToUtf8(path) << "\n";
 
 		if (!m_recorder.empty())
@@ -164,6 +168,7 @@ void RecordingWindow::onImportFile(const std::filesystem::path& path)
 
 void RecordingWindow::onFileSave(const std::filesystem::path& path)
 {
+	MyApp::get().processRecording();
 	namespace fs = std::filesystem;
 
 	recording_path::validatePath(path);
@@ -185,6 +190,7 @@ void RecordingWindow::onFileSave(const std::filesystem::path& path)
 	if (!file) throw std::runtime_error("Failed to write recording: " + os::text::pathToUtf8(path));
 	file.close();
 	if (file.fail()) throw std::runtime_error("Failed to close recording: " + os::text::pathToUtf8(path));
+	MyApp::get().reportRecordingSnapshot();
 	log() << "[info] recording saved to " << os::text::pathToUtf8(path) << '\n';
 }
 
@@ -204,6 +210,7 @@ void RecordingWindow::onAddSessionButtonClicked()
 
 void RecordingWindow::onDeleteSessionButtonClicked()
 {
+	if (!MyApp::get().recordingEditAllowed()) return;
 	m_isRenaming = false;
 
 	const int session_count = static_cast<int>(m_recorder.getSessionCount());
@@ -219,6 +226,7 @@ void RecordingWindow::onDeleteSessionButtonClicked()
 
 void RecordingWindow::onCopySessionButtonClicked()
 {
+	if (!MyApp::get().recordingEditAllowed()) return;
 	auto session_id = m_recorder.getOrderedSessionID(m_currSessionIdx);
 	m_recorder.copySession(session_id);
 }
@@ -243,6 +251,7 @@ void RecordingWindow::onSessionSelected(int idx)
 		std::strcpy(m_descriptionBuf, "");
 		std::strcpy(m_tagBuf, "");
 	}
+	MyApp::get().refreshRecordingViews();
 }
 
 void RecordingWindow::drawFileInfo(float content_width)

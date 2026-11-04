@@ -16,14 +16,6 @@ namespace
 		ImPlot3DQuat rot;
 	};
 
-	bool check_same_frame_fast(const retina::Frame& a, const retina::Frame& b)
-	{
-		return a.packetSize == b.packetSize &&
-			a.frameCount == b.frameCount &&
-			a.deltaUs == b.deltaUs &&
-			a.points.size() == b.points.size() &&
-			a.targets.size() == b.targets.size();
-	}
 
 	ImU64 fnv1a(ImU64 hash, const void* data, size_t size)
 	{
@@ -120,6 +112,12 @@ const retina::Frame& PointCloudWindow::getLastFrame() const
 
 void PointCloudWindow::onUpdate()
 {
+	if (m_isRecording)
+	{
+		refreshFrameReference();
+		resetPlaybackState();
+		return;
+	}
 	if (m_source == WindowSource::None)
 	{
 		m_sessionId = -1;
@@ -191,6 +189,7 @@ void PointCloudWindow::onUpdate()
 
 void PointCloudWindow::onDraw(const ImVec2& size)
 {
+	refreshFrameReference();
 	onDrawMenuBar();
 
 	if (m_source == WindowSource::None)
@@ -239,10 +238,11 @@ void PointCloudWindow::onDraw(const ImVec2& size)
 			m_recordingWindow->onDeleteSessionButtonClicked();
 		if (ImGui::IsKeyPressed(ImGuiKey_Equal, false))
 			m_recordingWindow->onAddSessionButtonClicked();
-		if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false))
+		if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) && MyApp::get().recordingEditAllowed())
 		{
 			auto& recorder = m_recordingWindow->getRecorder();
 			recorder.clearSession(m_sessionId);
+			MyApp::get().refreshRecordingViews();
 		}
 		if (ImGui::IsKeyPressed(ImGuiKey_Backslash, false))
 		{
@@ -253,15 +253,7 @@ void PointCloudWindow::onDraw(const ImVec2& size)
 		}
 	}
 
-	if (m_isRecording)
-	{
-		auto& recorder = m_recordingWindow->getRecorder();
-		size_t frame_count = recorder.getSession(m_sessionId)->frames.size();
-		if (frame_count >= static_cast<size_t>(m_recordMaxFrameLength))
-		{
-			onRecordButtonClicked();
-		}
-	}
+	refreshFrameReference();
 
 	static const auto kPlotFlags = ImPlot3DFlags_NoZoom;
 	if (ImPlot3D::BeginPlot(m_plotTitle.c_str(), plot_size, kPlotFlags))
@@ -397,32 +389,7 @@ void PointCloudWindow::onDraw(const ImVec2& size)
 			ImDrawList* draw_list = ImGui::GetWindowDrawList();
 			draw_list->AddRect(rect_min, rect_max, IM_COL32(255, 0, 0, 255), 1.0f, 0, thickness);
 
-			// TODO: improve logic
-			// Actually record the frame here
-			if (m_currSession->frames.empty())
-			{
-				auto frame = PointCloudRecorder::RecordFrame{ MyApp::get().getLastFrame() };
-				auto& recorder = m_recordingWindow->getRecorder();
-				recorder.appendFrame(m_currSession->id, frame);
-				m_playbackIdx = 0;
-			}
-			else
-			{
-				const auto& curr_frame = m_currSession->frames[m_playbackIdx].frame;
-				const auto& new_frame = MyApp::get().getLastFrame();
 
-				// Check if the frame is really new
-				if (!check_same_frame_fast(curr_frame, new_frame))
-				{
-					auto frame = PointCloudRecorder::RecordFrame{ new_frame };
-					auto& recorder = m_recordingWindow->getRecorder();
-					
-					recorder.insertFrame(m_currSession->id, frame, m_playbackIdx + 1);
-
-					if (m_playbackIdx < static_cast<int>(m_currSession->frames.size()) - 1)
-						m_playbackIdx++;
-				}
-			}
 		}
 	}
 
@@ -578,7 +545,7 @@ void PointCloudWindow::onRecordButtonClicked()
 	if (m_currSession == nullptr || m_isPlaying)
 		return;
 
-	if (m_isRecording) m_isRecording = false;
+	if (m_isRecording) MyApp::get().pauseRecording(*this);
 	else beginRecording();
 }
 
@@ -593,6 +560,7 @@ void PointCloudWindow::stopForConnectionLoss(const char* reason)
 
 bool PointCloudWindow::beginRecording()
 {
+	if (!MyApp::get().recordingEditAllowed()) return false;
 	if (MyApp::get().getConnectionStatus() != MyApp::ConnectionStatus::Connected ||
 		MyApp::get().getLastFrame().packetSize == 0) return false;
 	if (m_newSessionRequired)
@@ -604,12 +572,16 @@ bool PointCloudWindow::beginRecording()
 		m_newSessionRequired = false;
 		log() << "[info] recording: new session after disconnect id=" << m_sessionId << '\n';
 	}
-	m_isRecording = true;
-	return true;
+	const auto* session = m_recordingWindow->getRecorder().getSession(m_sessionId);
+	if (!session || m_recordMaxFrameLength <= 0) return false;
+	const size_t insertion = session->frames.empty() ? 0 : static_cast<size_t>(m_playbackIdx + 1);
+	m_isRecording = MyApp::get().beginRecording(*this, m_sessionId, insertion, static_cast<size_t>(m_recordMaxFrameLength));
+	return m_isRecording;
 }
 
 void PointCloudWindow::onTrimLeftButtonClicked()
 {
+	if (!MyApp::get().recordingEditAllowed()) return;
 	if (m_source != WindowSource::CurrentSession && m_source != WindowSource::Session)
 		return;
 	if (m_currSession == nullptr || m_currSession->frames.empty() || m_isPlaying || m_isRecording)
@@ -619,12 +591,14 @@ void PointCloudWindow::onTrimLeftButtonClicked()
 	{
 		auto& recorder = m_recordingWindow->getRecorder();
 		recorder.removeFrame(m_sessionId, 0, m_playbackIdx);
+		MyApp::get().refreshRecordingViews();
 		m_playbackIdx = 0;
 	}
 }
 
 void PointCloudWindow::onTrimRightButtonClicked()
 {
+	if (!MyApp::get().recordingEditAllowed()) return;
 	if (m_source != WindowSource::CurrentSession && m_source != WindowSource::Session)
 		return;
 	if (m_currSession == nullptr || m_currSession->frames.empty() || m_isPlaying || m_isRecording)
@@ -635,6 +609,7 @@ void PointCloudWindow::onTrimRightButtonClicked()
 	{
 		auto& recorder = m_recordingWindow->getRecorder();
 		recorder.removeFrame(m_sessionId, m_playbackIdx + 1, frame_count - m_playbackIdx - 1);
+		MyApp::get().refreshRecordingViews();
 		m_playbackIdx = frame_count - 1;
 	}
 }
@@ -801,18 +776,20 @@ void PointCloudWindow::drawPlaybackControls()
 
 	ImGui::SameLine();
 	ImGui::BeginDisabled(disable_all || m_isRecording || !frame_count);
-	if (MyGui::IconButton("##DeleteFrame", ICON_FA_TRASH_CAN, delete_btn_size))
+	if (MyGui::IconButton("##DeleteFrame", ICON_FA_TRASH_CAN, delete_btn_size) && MyApp::get().recordingEditAllowed())
 	{
 		recorder->removeFrame(m_sessionId, m_playbackIdx);
+		MyApp::get().refreshRecordingViews();
 	}
 	ImGui::EndDisabled();
 
 	ImGui::SameLine();
 	ImGui::BeginDisabled(disable_all || m_isRecording || !frame_count || m_playbackIdx == frame_count - 1);
-	if (MyGui::IconButton("##Split", ICON_FA_CODE_BRANCH, split_btn_size))
+	if (MyGui::IconButton("##Split", ICON_FA_CODE_BRANCH, split_btn_size) && MyApp::get().recordingEditAllowed())
 	{
 		assert(recorder != nullptr);
 		recorder->splitSession(m_sessionId, m_playbackIdx);
+		MyApp::get().refreshRecordingViews();
 	}
 	ImGui::EndDisabled();
 
@@ -828,11 +805,14 @@ void PointCloudWindow::drawPlaybackControls()
 
 	ImGui::SameLine(center_pos > ImGui::GetCursorPosX() ? center_pos : 0.0f);
 	ImGui::BeginDisabled(disable_all || !is_connected || m_isRecording);
-	if (MyGui::IconButton("##Record", ICON_FA_CIRCLE, record_btn_size, IM_COL32(230, 40, 40, 255)))
+	if (MyGui::IconButton("##Record", ICON_FA_CIRCLE, record_btn_size, IM_COL32(230, 40, 40, 255)) && MyApp::get().recordingEditAllowed())
 	{
 		assert(recorder != nullptr);
 		if (!m_newSessionRequired)
+		{
 			recorder->removeFrame(m_sessionId, m_playbackIdx + 1, frame_count - (m_playbackIdx + 1));
+			MyApp::get().refreshRecordingViews();
+		}
 		beginRecording();
 	}
 	ImGui::EndDisabled();
@@ -842,7 +822,7 @@ void PointCloudWindow::drawPlaybackControls()
 	if (m_isRecording)
 	{
 		if (MyGui::IconButton("##Pause", ICON_FA_PAUSE, pause_btn_size))
-			m_isRecording = false;
+			MyApp::get().pauseRecording(*this);
 	}
 	else
 	{
@@ -853,10 +833,11 @@ void PointCloudWindow::drawPlaybackControls()
 
 	ImGui::SameLine();
 	ImGui::BeginDisabled(disable_all || !is_connected || m_isRecording || (m_isRecording && !frame_count));
-	if (MyGui::IconButton("##Stop", ICON_FA_STOP, stop_btn_size))
+	if (MyGui::IconButton("##Stop", ICON_FA_STOP, stop_btn_size) && MyApp::get().recordingEditAllowed())
 	{
 		assert(recorder != nullptr);
 		recorder->removeFrame(m_sessionId, 0, frame_count);
+		MyApp::get().refreshRecordingViews();
 		m_isRecording = false;
 		m_playbackIdx = -1;
 	}
@@ -864,11 +845,12 @@ void PointCloudWindow::drawPlaybackControls()
 
 	ImGui::SameLine();
 	ImGui::BeginDisabled(disable_all || !is_connected || m_isRecording);
-	if (MyGui::IconButton("##SingleFrame", ICON_FA_FORWARD_STEP, single_frame_btn_size))
+	if (MyGui::IconButton("##SingleFrame", ICON_FA_FORWARD_STEP, single_frame_btn_size) && MyApp::get().recordingEditAllowed())
 	{
 		assert(recorder != nullptr);
 		PointCloudRecorder::RecordFrame frame = { MyApp::get().getLastFrame() };
 		recorder->insertFrame(m_sessionId, frame, m_playbackIdx++);
+		MyApp::get().refreshRecordingViews();
 	}
 	ImGui::EndDisabled();
 
@@ -1031,6 +1013,36 @@ void PointCloudWindow::drawCenteredText(const char* text)
 	auto* draw_list = ImGui::GetWindowDrawList();
 	draw_list->AddRectFilled(text_bg_min, text_bg_max, text_bg_color);
 	draw_list->AddText(text_pos, text_color, text);
+}
+
+void PointCloudWindow::refreshFrameReference()
+{
+	if (m_isRecording)
+		m_currSession = m_recordingWindow->getRecorder().getSession(m_sessionId);
+	else if (m_source == WindowSource::CurrentSession)
+	{
+		const auto* selected = m_recordingWindow->getCurrentSession();
+		if (selected != m_currSession)
+		{
+			m_playbackIdx = 0;
+			m_isPlaying = false;
+		}
+		m_currSession = selected;
+		m_sessionId = m_currSession ? m_currSession->id : static_cast<SessionID>(-1);
+	}
+	else if (m_source == WindowSource::Session)
+		m_currSession = m_recordingWindow->getRecorder().getSession(m_sessionId);
+	else
+		m_currSession = nullptr;
+
+	m_currFrame = nullptr;
+	if (m_isRecording || m_source == WindowSource::Sensor)
+		m_currFrame = &MyApp::get().getLastFrame();
+	else if (m_currSession && !m_currSession->frames.empty())
+	{
+		m_playbackIdx = std::clamp(m_playbackIdx, 0, static_cast<int>(m_currSession->frames.size()) - 1);
+		m_currFrame = &m_currSession->frames[m_playbackIdx].frame;
+	}
 }
 
 void PointCloudWindow::resetPlaybackState()

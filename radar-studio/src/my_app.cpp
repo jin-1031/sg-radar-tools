@@ -117,6 +117,7 @@ void MyApp::run()
 	{
 		glfwPollEvents();
 		if (glfwWindowShouldClose(m_window)) break;
+		processRecording();
 		updateConnection();
 
 		if (m_windowMinimized)
@@ -150,6 +151,7 @@ void MyApp::connect(const std::string& host)
 	m_recoveryAnnounced = false;
 	m_connectionLossHandled = false;
 	m_io = std::make_unique<asio::io_context>();
+	++m_recordingGeneration;
 
 	if (!host.empty())
 	{
@@ -217,6 +219,7 @@ void MyApp::cancelOrDisconnectImpl(const char* reason)
 	m_reconnect.reset();
 	m_cancelConnection.store(true);
 	log() << "[info] reconnect: canceled reason=" << reason << '\n';
+	finishRecording(reason);
 	if (hadAttempt)
 		for (auto* window : m_pointWindows) window->stopForConnectionLoss(reason);
 	{
@@ -237,6 +240,7 @@ void MyApp::cancelOrDisconnectImpl(const char* reason)
 
 void MyApp::finishConnectionAttempt()
 {
+	finishRecording("connection_cleanup");
 	if (m_ioThread.joinable()) m_ioThread.join();
 	std::unique_lock lock(m_clientMutex);
 	if (m_client)
@@ -258,6 +262,7 @@ void MyApp::stopRecordingForConnectionLoss()
 {
 	if (m_connectionLossHandled) return;
 	m_connectionLossHandled = true;
+	finishRecording("connection_lost");
 	log() << "[info] reconnect: connection ended host=" << m_lastConnectedHost << '\n';
 	for (auto* window : m_pointWindows) window->stopForConnectionLoss();
 }
@@ -322,6 +327,7 @@ void MyApp::updateConnection()
 	{
 		m_reconnect.started();
 		m_io = std::make_unique<asio::io_context>();
+		++m_recordingGeneration;
 		m_workerDone.store(false);
 		m_readFailure.store(false);
 		m_tcpConnected.store(false);
@@ -334,6 +340,94 @@ void MyApp::updateConnection()
 			<< "/5 host=" << m_lastConnectedHost << '\n';
 		m_ioThread = std::thread([this, host = m_lastConnectedHost]() { connectToDeviceAsync(host); });
 	}
+}
+
+bool MyApp::recordingEditAllowed()
+{
+	if (!m_capture.snapshot().busy()) return true;
+	log() << "[warning] recording: Pause capture before Open/Delete/content editing\n";
+	return false;
+}
+
+bool MyApp::beginRecording(PointCloudWindow& owner, SessionID session, size_t insertion, size_t maximum)
+{
+	if (!recordingEditAllowed()) return false;
+	const auto it = std::find(m_pointWindows.begin(), m_pointWindows.end(), &owner);
+	if (it == m_pointWindows.end()) return false;
+	const auto ownerId = static_cast<int>(it - m_pointWindows.begin());
+	if (!m_capture.begin(m_recordingWindow->getRecorder(), session, ownerId, m_recordingGeneration, insertion, maximum))
+	{
+		log() << "[error] recording: start rejected; check Session, insertion, MaxFrameLength and lengthUs sum\n";
+		return false;
+	}
+	const auto status = m_capture.snapshot();
+	log() << "[info] recording: started run=" << status.run << " generation=" << status.generation
+		<< " session=" << session << " owner=" << ownerId << " insertion=" << insertion << '\n';
+	return true;
+}
+
+void MyApp::pauseRecording(PointCloudWindow& owner)
+{
+	const auto status = m_capture.snapshot();
+	if (status.owner >= 0 && static_cast<size_t>(status.owner) < m_pointWindows.size() &&
+		m_pointWindows[status.owner] == &owner)
+		finishRecording("pause");
+}
+
+void MyApp::finishRecording(const char* reason)
+{
+	const auto before = m_capture.snapshot();
+	if (before.busy()) log() << "[info] recording: stopping run=" << before.run << " reason=" << reason << '\n';
+	m_capture.stop();
+	processRecording();
+	const auto status = m_capture.snapshot();
+	if (status.owner >= 0 && static_cast<size_t>(status.owner) < m_pointWindows.size())
+		m_pointWindows[status.owner]->m_isRecording = false;
+	if (status.pending != 0)
+		log() << "[error] recording: uncommitted frames retained reason=" << reason << " pending=" << status.pending << '\n';
+}
+
+void MyApp::refreshRecordingViews()
+{
+	for (auto* window : m_pointWindows) window->refreshFrameReference();
+}
+
+void MyApp::processRecording()
+{
+	if (!m_recordingWindow) return;
+	m_capture.pump(m_recordingWindow->getRecorder());
+	const auto status = m_capture.snapshot();
+	if (status.run == 0) return;
+	if (status.owner >= 0 && static_cast<size_t>(status.owner) < m_pointWindows.size())
+	{
+		auto* window = m_pointWindows[status.owner];
+		if (window->m_isRecording && status.applied != 0)
+			window->m_playbackIdx = static_cast<int>(status.insertion + status.applied - 1);
+		if (!status.accepting) window->m_isRecording = false;
+	}
+	refreshRecordingViews();
+	if (!status.accepting && (status.pending == 0 || status.sinkFailed))
+	{
+		if (m_reportedCaptureRun == status.run) return;
+		m_reportedCaptureRun = status.run;
+		m_hasIncompleteCapture = m_hasIncompleteCapture || !status.complete();
+		log() << (status.complete() ? "[info]" : "[error]") << " recording: capture result run=" << status.run
+			<< " generation=" << status.generation << " session=" << status.session
+			<< " eligible=" << status.eligible << " accepted=" << status.accepted
+			<< " enqueueFailed=" << status.enqueueFailed << " applied=" << status.applied
+			<< " pending=" << status.pending << " bytes=" << status.bytes
+			<< " peakBytes=" << status.peakBytes << " peakFrames=" << status.peakFrames
+			<< " complete=" << status.complete() << " error=" << (status.error ? status.error : "none") << '\n';
+	}
+}
+
+void MyApp::reportRecordingSnapshot()
+{
+	const auto status = m_capture.snapshot();
+	log() << (m_hasIncompleteCapture || status.error ? "[warning]" : "[info]")
+		<< " recording: file snapshot run=" << status.run << " applied=" << status.applied
+		<< " accepting=" << status.accepting << " incompleteCaptureSeen=" << (m_hasIncompleteCapture || status.error)
+		<< " (snapshot save does not finalize an active capture)\n";
 }
 
 MyApp::ConnectionStatus MyApp::getConnectionStatus() const
@@ -564,8 +658,6 @@ void MyApp::updateSensor()
 			m_lastBandwidthMbps = static_cast<float>(m_client->getBandwidthMbps());
 			m_lastFrameRate = static_cast<float>(m_client->getFrameRate());
 
-			if (m_lastFrame.deltaUs == 0)
-				m_lastFrame.deltaUs = 50000;
 		});
 }
 
@@ -847,7 +939,11 @@ void MyApp::connectToDeviceAsync(const std::string& host)
 				m_tcpConnected.store(true);
 				m_attemptEstablished.store(true);
 			});
-		m_client->setOnFrame([this](const retina::Frame&) { m_validFrameReceived.store(true); });
+		m_client->setOnFrame([this, generation = m_recordingGeneration](const retina::Frame& frame)
+		{
+			m_validFrameReceived.store(true);
+			m_capture.enqueue(frame, generation);
+		});
 		m_client->setOnDisconnected([this]()
 		{
 			if (!m_cancelConnection.load()) m_readFailure.store(true);
