@@ -63,6 +63,7 @@ private:
 	void drawFrustum(bool polygon = false);
 	void drawCenteredText(const char* text);
 
+	void refreshFrameReference();
 	void resetPlaybackState();
 	void updatePlaybackState();
 

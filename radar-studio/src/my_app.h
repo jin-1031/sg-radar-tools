@@ -4,6 +4,7 @@
 #include <common/pcr/pcr_type.h>
 #include <common/util/debug_console.h>
 #include "device/reconnect_policy.h"
+#include "recording_capture.h"
 
 #include <atomic>
 #include <iosfwd>
@@ -80,6 +81,12 @@ public:
 
 	void setSensorSpec(const pcr::SensorSpec& spec);
 	void resetSensorSpec();
+	bool beginRecording(PointCloudWindow& owner, SessionID session, size_t insertion, size_t maximum);
+	void pauseRecording(PointCloudWindow& owner);
+	bool recordingEditAllowed();
+	void processRecording();
+	void refreshRecordingViews();
+	void reportRecordingSnapshot();
 
 private:
 	void initWindow();
@@ -99,6 +106,7 @@ private:
 	void updateConnection();
 	void finishConnectionAttempt();
 	void stopRecordingForConnectionLoss();
+	void finishRecording(const char* reason);
 
 	std::ostream& log();
 
@@ -173,6 +181,10 @@ private:
 	retina::ReconnectPolicy m_reconnect;
 	retina::ReconnectPolicy::Clock::time_point m_firstValidAt{};
 
+	recording::Capture m_capture;
+	uint64_t m_recordingGeneration = 0;
+	uint64_t m_reportedCaptureRun = 0;
+	bool m_hasIncompleteCapture = false;
 	std::unique_ptr<retina::DeviceInfo> m_deviceInfo;
 	pcr::Frame m_lastFrame;
 	float m_lastBandwidthMbps = 0.0f;

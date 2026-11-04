@@ -3,8 +3,13 @@ setlocal EnableDelayedExpansion
 rem Run from a VS2022 x64 Developer Command Prompt (or Developer PowerShell).
 for %%I in ("%~dp0..\..") do set "ROOT=%%~fI"
 set "OUT=%ROOT%\radar-studio\x64\Release\tests"
+if not "%~1"=="" set "OUT=%~f1"
 if not exist "%OUT%" mkdir "%OUT%"
 pushd "%OUT%"
+cl /nologo /EHsc /std:c++20 /O2 /D_WIN32_WINNT=0x0601 /I"%ROOT%" /I"%ROOT%\common\thirdparty\asio\include" "%~dp0retina_parser_test.cpp" "%ROOT%\radar-studio\src\device\retina.cpp" "%ROOT%\common\os\network.cpp" "%ROOT%\radar-emulator\src\device\mock_protocol.cpp" /Fe:retina_parser_test.exe
+if errorlevel 1 goto fail
+retina_parser_test.exe
+if errorlevel 1 goto fail
 cl /nologo /EHsc /std:c++20 /O2 "%~dp0reconnect_policy_test.cpp" /Fe:reconnect_policy_test.exe
 if errorlevel 1 goto fail
 reconnect_policy_test.exe
@@ -15,6 +20,7 @@ retina_connection_test.exe
 if errorlevel 1 goto fail
 rem Reuse the existing Studio build's recorder and zstd objects, without modifying shared code.
 set "BUILD=%ROOT%\radar-studio\x64\Release"
+if not "%~2"=="" set "BUILD=%~f2"
 set "ZSTD="
 for %%F in ("%BUILD%\zstd*.obj" "%BUILD%\entropy_common.obj" "%BUILD%\error_private.obj" "%BUILD%\fse_compress.obj" "%BUILD%\fse_decompress.obj" "%BUILD%\hist.obj" "%BUILD%\huf_compress.obj" "%BUILD%\huf_decompress.obj" "%BUILD%\xxhash.obj" "%BUILD%\pool.obj" "%BUILD%\threading.obj") do set "ZSTD=!ZSTD! "%%~fF""
 cl /nologo /EHsc /std:c++20 /O2 /MD /I"%ROOT%" "%~dp0recorder_session_test.cpp" "%BUILD%\point_cloud_recorder.obj" !ZSTD! /Fe:recorder_session_test.exe
@@ -32,6 +38,12 @@ if errorlevel 1 goto fail
 cl /nologo /EHsc /std:c++20 /O2 /MD /I"%ROOT%" "%~dp0recording_path_test.cpp" "%BUILD%\point_cloud_recorder.obj" !ZSTD! /Fe:recording_path_test.exe
 if errorlevel 1 goto fail
 recording_path_test.exe
+if errorlevel 1 goto fail
+cl /nologo /EHsc /std:c++20 /O2 /MD /D_WIN32_WINNT=0x0601 /I"%ROOT%" /I"%ROOT%\common\thirdparty\asio\include" "%~dp0recording_capture_test.cpp" "%ROOT%\radar-studio\src\device\retina.cpp" "%ROOT%\common\os\network.cpp" "%ROOT%\radar-emulator\src\device\mock_protocol.cpp" "%BUILD%\point_cloud_recorder.obj" !ZSTD! /Fe:recording_capture_test.exe
+if errorlevel 1 goto fail
+recording_capture_test.exe
+if errorlevel 1 goto fail
+recording_capture_test.exe --loopback
 if errorlevel 1 goto fail
 popd
 exit /b 0
