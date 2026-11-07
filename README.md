@@ -167,29 +167,6 @@ float32 값은 `.9g`로 출력하며 Target 레코드 전체를 별도 CSV로 �
 PCR 자체를 읽는 Python 예시는 `tools/pcr/example.py`, C++ Reader/Writer는
 `common/pcr/point_cloud_recorder.{h,cpp}`에 있습니다.
 
-## 검증 결과와 알려진 제한
-
-기존 Windows x64 Release 검증에서 Studio Build, Target Parser 23개, Recorder 13개 시험과
-ASan 시험, FIN/RST loopback 및 PCR Save/Load round-trip을 확인했습니다.
-최신 Studio Commit 검증의 기본 C++ 시험은 **7/8 PASS**이며 전체 runner는 실패입니다.
-`retina_connection_test`의 `listen()`에서 Winsock 10014가 간헐 발생했고 근본 원인은 미확정입니다.
-후속 제한된 A/B 시험에서 재현되지 않았지만 해결된 것으로 판단하지 않습니다.
-
-2026-11-04 RETINA-4SN 수동 시험에서는 연결·Point Cloud·녹화·PCR 재로딩을 확인했습니다.
-최종 3,843프레임 / 505,831포인트였으며 `eligible = accepted = applied`, `enqueueFailed = pending = 0`이었습니다.
-첫 delta는 0, delta 합계와 Session 길이는 모두 192,118,716µs였고 최소화·창 접힘 중에도 녹화가 유지됐습니다.
-약 5분 14초 관찰 구간에 TCP 10054나 충돌 보고는 없었습니다. 이 결과가 장시간 안정성을 보장하지는 않습니다.
-
-FIFO에 접수한 프레임의 보존과 센서가 송신한 모든 프레임의 보존은 다릅니다. 후자는 미검증입니다.
-실센서 Target 레코드가 0개여서 Target 내용·전체 wire layout과 Target ID 253/254/255의 의미는 미확정입니다.
-과거 TCP 10054와 GUI 자동화 중 GLFW 접근 위반 원인도 해결된 것으로 보지 않습니다.
-Emulator는 최소화 시 송출이 멈출 수 있으며 원본 PCR 프레임 번호·시간 간격을 그대로 재현하는 도구가 아닙니다.
-한글 경로 처리가 추가됐지만 Windows Dialog의 ACP 변환과 입력·경로 길이 제한은 남아 있습니다.
-
-테스트 소스는 `radar-studio/tests/`와 `tools/pcr/tests/`에 있습니다.
-C++ runner `radar-studio/tests/run_tests.cmd`는 x64 개발 명령 창과 같은 소스 버전의 Studio 빌드 object가 필요합니다.
-소켓 시험은 실제 포트를 사용하며 실패를 재시도로 통과 처리하지 않습니다.
-
 ## 라이선스와 원본 출처
 
 원본: [dandevlog0206/sg-radar-tools](https://github.com/dandevlog0206/sg-radar-tools)
