@@ -108,7 +108,7 @@ Console의 로컬 IP·mask·탐색 범위를 센서 네트워크와 비교합니
 5. **Pause**로 녹화를 마친 뒤 **Recording**에서 폴더·파일명을 설정하고 **Save**를 누릅니다.
 6. 저장 파일과 Console의 성공 로그를 확인하고, 필요하면 **Open**으로 다시 읽어 봅니다.
 
-기본 저장 순서는 **Record → Pause → Save**입니다. **Stop은 녹화 종료용 Pause와 다르며 선택 Session의 프레임을 삭제할 수 있습니다.**
+기본 저장 순서는 **Record → Pause → Save**입니다.
 Save는 선택 Session만이 아니라 Recorder의 전체 Session을 저장합니다.
 녹화 중 Save도 가능하지만 그 시점까지의 snapshot을 저장할 뿐 녹화를 끝내지는 않습니다.
 Open은 현재 녹화를 교체하고 Import는 Session을 가져옵니다. Open/Import와 내용 편집은 Pause 후 수행합니다.
